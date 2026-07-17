@@ -1,5 +1,20 @@
 # Design notes — Depth Charge Mode 7 port
 
+## Decisions locked during implementation (2026-07-17)
+
+- **Max 3 subs at once** (not the original's 5) — Mode 7's 54 water sixels
+  can't breathe with more. Subs patrol colour bands 1/3/5 (y = 25/43/61);
+  band 0 stays open water so the top sub isn't crowding the ship.
+- Ship rides the waterline at y=10 (hull bottom on the last sky row).
+- Water rows carry background codes (blue via 157), sky rows cyan; the
+  colour boundary is the waterline. Playfield left edge is x=6 (cols 0-2
+  of coloured rows are control cells). Lane colours, surface down:
+  white, cyan, yellow, green, magenta, red.
+- One sub sprite for both directions (the original doesn't flip either);
+  porthole rows distinguish the three score types.
+- Engine: object table + walker in MC (see src/sixel.asm header), BASIC
+  is director only. Mock scene runs ~35Hz.
+
 Ported from the PICO-8 original (128×128, 30fps). Reference implementation:
 `C:\Dev\depth-charge\depth.p8` (v1.1 — includes the mine-launch fix; left- and
 right-moving subs both drop mines).

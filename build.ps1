@@ -7,6 +7,8 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Host "Built build\depthcharge.ssd"
     if ($args -contains '-run') {
+        # b2 refuses a second instance; the old one is always stale here
+        Get-Process b2 -ErrorAction SilentlyContinue | Stop-Process -Force
         Start-Process (Resolve-Path tools\b2\b2.exe) -ArgumentList '-0', (Resolve-Path build\depthcharge.ssd), '-b'
     }
 }

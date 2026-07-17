@@ -10,13 +10,15 @@ REM lane colours on blue water: white,cyan,yellow,green,magenta,red
 DIM lane% 5
 lane%?0=151:lane%?1=150:lane%?2=147:lane%?3=146:lane%?4=149:lane%?5=145
 PROCscreen
-PRINT TAB(0,0);"Z/X STEER  SPACE DROP  Q QUITS"
+SC%=0:HS%=0:SEC%=60:LS%=-1:CA%=0:MI%=0
+PROChud
+PRINT TAB(0,24);CHR$(134);"Z/X STEER  SPACE DROP  Q QUITS";
 REM slot 0 ship (parked; BASIC pokes x), 1-3 subs (types 0/1/2), 4 charge, 5 mine
-PROCspawn(0,0,30,8,0,0,6,57,0,74)
-PROCspawn(1,1,6,16,48,0,6,62,0,74)
-PROCspawn(2,2,62,34,-30,0,6,62,0,74)
-PROCspawn(3,3,10,52,16,0,6,62,0,74)
-CA%=0:MI%=0
+PROCspawn(0,0,30,10,0,0,6,57,0,74)
+REM subs patrol colour bands 1/3/5; band 0 is open water below the ship
+PROCspawn(1,1,6,25,48,0,6,62,0,74)
+PROCspawn(2,2,62,43,-30,0,6,62,0,74)
+PROCspawn(3,3,10,61,16,0,6,62,0,74)
 S%=30
 FR%=0:T0%=TIME
 REPEAT
@@ -28,10 +30,13 @@ IF S%>57 THEN S%=57
 tab%?3=S%
 CALL walk%
 IF ?evt% THEN PROCevents
-IF CA%=0 AND INKEY(-99) THEN CA%=1:PROCspawn(4,4,S%+10,13,0,128,6,77,12,63)
+IF CA%=0 AND INKEY(-99) THEN CA%=1:PROCspawn(4,4,S%+10,16,0,128,6,77,15,63):PROCdc
 IF MI%=0 AND RND(100)=1 THEN PROCmine
+SEC%=60-(TIME-T0%) DIV 100
+IF SEC%<0 THEN SEC%=0
+IF SEC%<>LS% THEN LS%=SEC%:PROCtime
 FR%=FR%+1
-IF FR% MOD 50=0 THEN PRINT TAB(33,0);INT(FR%*1000/(TIME-T0%))/10;"HZ ";
+IF FR% MOD 50=0 THEN PRINT TAB(30,0);CHR$(134);STR$(INT(FR%*1000/(TIME-T0%))/10);"HZ ";
 UNTIL INKEY(-17)
 PROCscreen
 END
@@ -40,7 +45,7 @@ LOCAL B%
 B%=tab%+RND(3)*16
 IF B%?0<>1 THEN ENDPROC
 MI%=1
-PROCspawn(5,5,B%?3+7,B%?5+4,0,-64,6,77,13,74)
+PROCspawn(5,5,B%?3+7,B%?5+4,0,-64,6,77,16,74)
 ENDPROC
 DEF PROCevents
 LOCAL I%,B%
@@ -51,11 +56,25 @@ NEXT
 ?evt%=0
 ENDPROC
 DEF PROChandle(I%,B%)
-IF I%=4 THEN CA%=0:B%?0=0:ENDPROC
+IF I%=4 THEN CA%=0:B%?0=0:PROCdc:ENDPROC
 IF I%=5 THEN MI%=0:B%?0=0:ENDPROC
 REM sub re-enters from the side it is heading away from
 IF B%?7>127 THEN B%?3=62 ELSE B%?3=6
 B%?2=0:B%?10=255:B%?0=1
+ENDPROC
+DEF PROChud
+PRINT TAB(0,0);CHR$(131);"SCORE ";CHR$(135);STR$(SC%);
+PRINT TAB(15,0);CHR$(131);"HI ";CHR$(135);STR$(HS%);
+PRINT TAB(0,1);CHR$(131);"TIME";
+PRINT TAB(15,1);CHR$(131);"DC ";
+PROCtime
+PROCdc
+ENDPROC
+DEF PROCtime
+PRINT TAB(5,1);CHR$(135);STR$(SEC%);" ";
+ENDPROC
+DEF PROCdc
+PRINT TAB(18,1);CHR$(135);STR$(5-CA%);
 ENDPROC
 DEF PROCspawn(N%,SP%,X%,Y%,VX%,VY%,M0%,M1%,M2%,M3%)
 LOCAL B%,V%
