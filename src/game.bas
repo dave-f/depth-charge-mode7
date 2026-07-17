@@ -1,11 +1,11 @@
 REM Depth Charge (Mode 7) - object walker test, real sprites
 REM Z/X steer ship, SPACE drops a charge, Q quits
 MODE 7
-HIMEM=&7700
+HIMEM=&7500
 *LOAD PLOT
 VDU 23;8202;0;0;0;
-init%=&7700:walk%=&7712
-evt%=&7715:tab%=&7718
+init%=&7500:walk%=&7512
+evt%=&7515:tab%=&7518
 REM lane colours on blue water: white,cyan,yellow,green,magenta,red
 DIM lane% 5
 lane%?0=151:lane%?1=150:lane%?2=147:lane%?3=146:lane%?4=149:lane%?5=145
@@ -20,7 +20,7 @@ PROCspawn(1,1,6,25,48,0,6,62,0,74)
 PROCspawn(2,2,62,43,-30,0,6,62,0,74)
 PROCspawn(3,3,10,61,16,0,6,62,0,74)
 S%=30
-FR%=0:T0%=TIME
+FR%=0:T0%=TIME:TB%=TIME
 REPEAT
 A%=19:CALL &FFF4
 IF INKEY(-98) THEN S%=S%-1
@@ -32,7 +32,7 @@ CALL walk%
 IF ?evt% THEN PROCevents
 IF CA%=0 AND INKEY(-99) THEN CA%=1:PROCspawn(4,4,S%+10,16,0,128,6,77,15,63):PROCdc
 IF MI%=0 AND RND(100)=1 THEN PROCmine
-SEC%=60-(TIME-T0%) DIV 100
+SEC%=60-(TIME-TB%) DIV 100
 IF SEC%<0 THEN SEC%=0
 IF SEC%<>LS% THEN LS%=SEC%:PROCtime
 FR%=FR%+1
@@ -45,22 +45,34 @@ LOCAL B%
 B%=tab%+RND(3)*16
 IF B%?0<>1 THEN ENDPROC
 MI%=1
-PROCspawn(5,5,B%?3+7,B%?5+4,0,-64,6,77,16,74)
+REM ymin 13: mine ink reaches the hull's bottom row before expiring
+PROCspawn(9,5,B%?3+7,B%?5+4,0,-64,6,77,13,74)
 ENDPROC
 DEF PROCevents
 LOCAL I%,B%
-FOR I%=1 TO 5
+FOR I%=1 TO 16
 B%=tab%+I%*16
-IF B%?0=2 THEN PROChandle(I%,B%)
+IF B%?0>1 THEN PROChandle(I%,B%)
 NEXT
 ?evt%=0
 ENDPROC
 DEF PROChandle(I%,B%)
+LOCAL ST%
+ST%=B%?0
 IF I%=4 THEN CA%=0:B%?0=0:PROCdc:ENDPROC
-IF I%=5 THEN MI%=0:B%?0=0:ENDPROC
-REM sub re-enters from the side it is heading away from
+IF I%>=9 THEN MI%=0:B%?0=0:IF ST%=3 THEN PROCdeath
+IF I%>=9 THEN ENDPROC
+REM sub: sunk scores and buys time; either way re-enter from an edge
+IF ST%=3 THEN SC%=SC%+30*B%?1-10:TB%=TB%+1000:PROCscore
 IF B%?7>127 THEN B%?3=62 ELSE B%?3=6
 B%?2=0:B%?10=255:B%?0=1
+ENDPROC
+DEF PROCscore
+PRINT TAB(6,0);CHR$(135);STR$(SC%);
+IF SC%>HS% THEN HS%=SC%:PRINT TAB(18,0);CHR$(135);STR$(HS%);
+ENDPROC
+DEF PROCdeath
+PRINT TAB(25,1);CHR$(129);"MINE HIT!";
 ENDPROC
 DEF PROChud
 PRINT TAB(0,0);CHR$(131);"SCORE ";CHR$(135);STR$(SC%);
@@ -71,7 +83,7 @@ PROCtime
 PROCdc
 ENDPROC
 DEF PROCtime
-PRINT TAB(5,1);CHR$(135);STR$(SEC%);" ";
+PRINT TAB(7,1);CHR$(135);STR$(SEC%);" ";
 ENDPROC
 DEF PROCdc
 PRINT TAB(18,1);CHR$(135);STR$(5-CA%);

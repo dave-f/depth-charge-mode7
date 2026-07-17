@@ -19,9 +19,9 @@
 \ No clipping: sprites must lie fully on screen.
 \
 \ Object table (20 slots of 16 bytes at objtab; poke from BASIC):
-\   +0 status: 0 free, 1 active, 2 expired (walker sets 2 after erasing;
-\      BASIC handles then clears). Walker INCs objevt per expiry, so
-\      BASIC needs just one PEEK per frame to notice.
+\   +0 status: 0 free, 1 active, 2 expired, 3 hit (walker sets 2/3 after
+\      erasing the sprite; BASIC handles then clears). Walker INCs objevt
+\      each time, so BASIC needs just one PEEK per frame to notice.
 \   +1 sprite id           +2/+3  x lo/hi (8.8 fixed, hi = sixel)
 \   +4/+5 y lo/hi          +6/+7  vx lo/hi (signed 8.8, <1 sixel/frame)
 \   +8/+9 vy lo/hi         +10/+11 last drawn sixel x/y (255 = never)
@@ -30,11 +30,20 @@
 \ object (vx=vy=0) still redraws if BASIC pokes its x/y hi byte — that is
 \ how the ship is steered.
 \
-\ Sprite format: EQUB width, height, then height rows of CEIL(width/8)
-\ bytes, MSB first (leftmost sixel = bit 7). 1 = plot, 0 = transparent
-\ (draw/erase) or background (move). Movers carry a blank pad column each
-\ side — and pad rows above/below if they move vertically — so an opaque
-\ move at the new position wipes the trailing edge of the old.
+\ Slot ranges are the collision type system: after integrating, the
+\ walker box-tests charge slots against sub slots and mine slots against
+\ the ship, on INK boxes (sprite header ink fields, so pads never hit).
+\ Both parties of a charge/sub hit (the mine only, for mine/ship) are
+\ erased and set to status 3. Slots: 0 ship, 1-3 subs, 4-8 charges,
+\ 9-16 mines, 17-19 free for effects.
+\
+\ Sprite format: EQUB width, height, ink-x, ink-y, ink-w, ink-h, then
+\ height rows of CEIL(width/8) bytes, MSB first (leftmost sixel = bit 7).
+\ 1 = plot, 0 = transparent (draw/erase) or background (move). The ink
+\ box is the collision rectangle relative to the drawn position. Movers
+\ carry a blank pad column each side — and pad rows above/below if they
+\ move vertically — so an opaque move at the new position wipes the
+\ trailing edge of the old.
 \ ---------------------------------------------------------------------------
 
 zpx    = &70
@@ -54,11 +63,21 @@ zpcy   = &7F        \ current y sixel
 zpwm   = &80        \ sprite width
 zpslot = &81        \ &81/&82: walker's current slot pointer
 zpcnt  = &83        \ walker: slots remaining
-zpnx   = &84        \ walker: this frame's sixel x
-zpny   = &85        \ walker: this frame's sixel y
+zpnx   = &84        \ walker: this frame's sixel x (integration only;
+zpny   = &85        \  ...collision reuses &84-&8B as the two ink boxes)
+zpboxa = &84        \ &84-&87: box A x1,x2,y1,y2 (collision pass)
+zpboxb = &88        \ &88-&8B: box B x1,x2,y1,y2
+zpgb   = &8C        \ &8C/&8D: loadbox/eraseslot slot pointer
+zpoth  = &8E        \ &8E/&8F: collision inner-loop slot pointer
 
 NSLOTS   = 20
 SLOTSIZE = 16
+SUB0     = 1        \ slot ranges double as collision types
+NSUBS    = 3
+CHG0     = 4
+NCHGS    = 5
+MINE0    = 9
+NMINES   = 8
 
 .start
     JMP initrow
@@ -75,8 +94,8 @@ SLOTSIZE = 16
 .objtab
     SKIP NSLOTS * SLOTSIZE
 
-ASSERT objevt = &7715
-ASSERT objtab = &7718
+ASSERT objevt = &7515
+ASSERT objtab = &7518
 
 .initrow                \ colour code(s) at the left, blank graphics after
     LDY zpy
@@ -160,9 +179,9 @@ ASSERT objtab = &7718
     INY
     LDA (zpptr),Y
     STA zph
-    CLC                 \ point the fetcher at the bitmap (header + 2)
+    CLC                 \ point the fetcher at the bitmap (header + 6)
     LDA zpptr
-    ADC #2
+    ADC #6
     STA sprfetch+1
     LDA zpptr+1
     ADC #0
@@ -364,7 +383,219 @@ ASSERT objtab = &7718
     DEC zpcnt
     BEQ owdone
     JMP owloop
-.owdone
+.owdone                 \ fall through into the collision pass
+
+\ --- collision pass (runs at the end of every objwalk) --------------------
+
+.collide
+    LDA #LO(objtab + CHG0*SLOTSIZE)     \ charges vs subs
+    STA zpslot
+    LDA #HI(objtab + CHG0*SLOTSIZE)
+    STA zpslot+1
+    LDA #NCHGS
+    STA zpcnt
+.chgloop
+    LDY #0
+    LDA (zpslot),Y
+    CMP #1
+    BNE chgnext
+    LDA zpslot          \ charge ink box -> A
+    STA zpgb
+    LDA zpslot+1
+    STA zpgb+1
+    LDX #0
+    JSR loadbox
+    LDA #LO(objtab + SUB0*SLOTSIZE)
+    STA zpoth
+    LDA #HI(objtab + SUB0*SLOTSIZE)
+    STA zpoth+1
+    LDA #NSUBS
+    STA zpwm            \ sub counter (blitter-idle here; see hit path)
+.subloop
+    LDY #0
+    LDA (zpoth),Y
+    CMP #1
+    BNE subnext
+    LDA zpoth           \ sub ink box -> B
+    STA zpgb
+    LDA zpoth+1
+    STA zpgb+1
+    LDX #4
+    JSR loadbox
+    JSR boxhit
+    BEQ subnext
+    LDA zpslot          \ hit: erase and mark both, charge is spent
+    STA zpgb
+    LDA zpslot+1
+    STA zpgb+1
+    JSR eraseslot       \ (clobbers zpwm - we leave the sub loop anyway)
+    LDY #0
+    LDA #3
+    STA (zpslot),Y
+    LDA zpoth
+    STA zpgb
+    LDA zpoth+1
+    STA zpgb+1
+    JSR eraseslot
+    LDY #0
+    LDA #3
+    STA (zpoth),Y
+    INC objevt
+    JMP chgnext
+.subnext
+    CLC
+    LDA zpoth
+    ADC #SLOTSIZE
+    STA zpoth
+    BCC subsame
+    INC zpoth+1
+.subsame
+    DEC zpwm
+    BEQ chgnext
+    JMP subloop
+.chgnext
+    CLC
+    LDA zpslot
+    ADC #SLOTSIZE
+    STA zpslot
+    BCC chgsame
+    INC zpslot+1
+.chgsame
+    DEC zpcnt
+    BEQ mines
+    JMP chgloop
+
+.mines                  \ mines vs the ship
+    LDA objtab          \ ship slot 0 status
+    CMP #1
+    BEQ minesgo
+    RTS
+.minesgo
+    LDA #LO(objtab)     \ ship ink box -> A, once (erases can't touch it)
+    STA zpgb
+    LDA #HI(objtab)
+    STA zpgb+1
+    LDX #0
+    JSR loadbox
+    LDA #LO(objtab + MINE0*SLOTSIZE)
+    STA zpslot
+    LDA #HI(objtab + MINE0*SLOTSIZE)
+    STA zpslot+1
+    LDA #NMINES
+    STA zpcnt
+.minloop
+    LDY #0
+    LDA (zpslot),Y
+    CMP #1
+    BNE minnext
+    LDA zpslot          \ mine ink box -> B
+    STA zpgb
+    LDA zpslot+1
+    STA zpgb+1
+    LDX #4
+    JSR loadbox
+    JSR boxhit
+    BEQ minnext
+    LDA zpslot          \ hit: mine dies; BASIC decides the ship's fate
+    STA zpgb
+    LDA zpslot+1
+    STA zpgb+1
+    JSR eraseslot
+    LDY #0
+    LDA #3
+    STA (zpslot),Y
+    INC objevt
+.minnext
+    CLC
+    LDA zpslot
+    ADC #SLOTSIZE
+    STA zpslot
+    BCC minsame
+    INC zpslot+1
+.minsame
+    DEC zpcnt
+    BEQ coldone
+    JMP minloop
+.coldone
+    RTS
+
+.loadbox                \ (zpgb) = slot; X = 0 -> box A, 4 -> box B
+    LDY #1
+    LDA (zpgb),Y        \ sprite id -> header
+    ASL A
+    TAY
+    LDA sprtab,Y
+    STA zpptr
+    LDA sprtab+1,Y
+    STA zpptr+1
+    LDY #3
+    LDA (zpgb),Y        \ sixel x
+    LDY #2
+    CLC
+    ADC (zpptr),Y       \ + ink-x
+    STA zpboxa,X        \ x1
+    LDY #4
+    CLC
+    ADC (zpptr),Y       \ + ink-w
+    SEC
+    SBC #1
+    STA zpboxa+1,X      \ x2
+    LDY #5
+    LDA (zpgb),Y        \ sixel y
+    LDY #3
+    CLC
+    ADC (zpptr),Y       \ + ink-y
+    STA zpboxa+2,X      \ y1
+    LDY #5
+    CLC
+    ADC (zpptr),Y       \ + ink-h
+    SEC
+    SBC #1
+    STA zpboxa+3,X      \ y2
+    RTS
+
+.boxhit                 \ -> A=1 (and Z clear) if boxes A and B overlap
+    LDA zpboxb          \ b.x1 <= a.x2 ?
+    CMP zpboxa+1
+    BEQ bh1
+    BCS bhno
+.bh1
+    LDA zpboxa          \ a.x1 <= b.x2 ?
+    CMP zpboxb+1
+    BEQ bh2
+    BCS bhno
+.bh2
+    LDA zpboxb+2        \ b.y1 <= a.y2 ?
+    CMP zpboxa+3
+    BEQ bh3
+    BCS bhno
+.bh3
+    LDA zpboxa+2        \ a.y1 <= b.y2 ?
+    CMP zpboxb+3
+    BEQ bh4
+    BCS bhno
+.bh4
+    LDA #1
+    RTS
+.bhno
+    LDA #0
+    RTS
+
+.eraseslot              \ erase (zpgb) slot's sprite at its last drawn spot
+    LDY #10
+    LDA (zpgb),Y
+    CMP #&FF
+    BEQ erdone          \ never drawn
+    STA zpx
+    LDY #11
+    LDA (zpgb),Y
+    STA zpy
+    LDY #1
+    LDA (zpgb),Y
+    STA zparg
+    LDA #&FF
+    JMP sprgo
+.erdone
     RTS
 
 \ --- tables ---------------------------------------------------------------
@@ -408,6 +639,7 @@ NEXT
 
 .sprship
     EQUB 22, 5
+    EQUB 1, 0, 20, 5    \ ink box
     EQUB %00000000, %01101100, %00000000   \ .........##.##........
     EQUB %01111111, %11111111, %11111000   \ .####################.
     EQUB %01111111, %11111111, %11111000   \ .####################.
@@ -416,6 +648,7 @@ NEXT
 
 .sprsub0
     EQUB 17, 7
+    EQUB 1, 0, 15, 7    \ ink box
     EQUB %00000000, %10000000, %00000000   \ ........#........
     EQUB %00000000, %10000000, %00000000   \ ........#........
     EQUB %00011111, %11111100, %00000000   \ ...###########...
@@ -426,6 +659,7 @@ NEXT
 
 .sprsub1
     EQUB 17, 7
+    EQUB 1, 0, 15, 7    \ ink box
     EQUB %00000000, %10000000, %00000000   \ ........#........
     EQUB %00000000, %10000000, %00000000   \ ........#........
     EQUB %00011111, %11111100, %00000000   \ ...###########...
@@ -436,6 +670,7 @@ NEXT
 
 .sprsub2
     EQUB 17, 7
+    EQUB 1, 0, 15, 7    \ ink box
     EQUB %00000000, %10000000, %00000000   \ ........#........
     EQUB %00000000, %10000000, %00000000   \ ........#........
     EQUB %00011111, %11111100, %00000000   \ ...###########...
@@ -446,6 +681,7 @@ NEXT
 
 .sprcharge
     EQUB 2, 6
+    EQUB 0, 1, 2, 4     \ ink box
     EQUB %00000000                         \ ..
     EQUB %11000000                         \ ##
     EQUB %11000000                         \ ##
@@ -455,6 +691,7 @@ NEXT
 
 .sprmine
     EQUB 3, 5
+    EQUB 0, 1, 3, 3     \ ink box
     EQUB %00000000                         \ ...
     EQUB %10100000                         \ #.#
     EQUB %01000000                         \ .#.
