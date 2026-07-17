@@ -7,6 +7,9 @@
 \   ?&70 = x sixel 0-79 (2-79 usable; col 0 holds the row colour code)
 \   ?&71 = y sixel 0-74, or char row 0-24 for initrow
 \   ?&72 = initrow: teletext colour code 145-151;  sprite ops: sprite id
+\   ?&73 = initrow only: 0 = plain row; else a graphics colour code
+\          145-151 used as the row background (cols 0-2 become codes:
+\          bg colour, new-background, then ?&72 -> playfield from x=6)
 \ Entry points (jump table at load address):
 \   +0 initrow  +3 plot  +6 unplot  +9 sprite draw  +12 sprite erase
 \   +15 sprite move (opaque: sets 1-bits AND clears 0-bits in one pass —
@@ -75,13 +78,21 @@ SLOTSIZE = 16
 ASSERT objevt = &7715
 ASSERT objtab = &7718
 
-.initrow                \ colour code at col 0, blank graphics across the rest
+.initrow                \ colour code(s) at the left, blank graphics after
     LDY zpy
     LDA rowlo,Y
     STA zprow
     LDA rowhi,Y
     STA zprow+1
     LDY #0
+    LDA zpmode          \ background wanted? prefix its colour + code 157
+    BEQ initplain
+    STA (zprow),Y
+    INY
+    LDA #157            \ new background (= current foreground)
+    STA (zprow),Y
+    INY
+.initplain
     LDA zparg
     STA (zprow),Y
     LDA #&A0
@@ -381,38 +392,72 @@ NEXT
 \ Movers are padded with blank edge columns/rows (see header comment), so
 \ the drawn position is the pad's top-left, one sixel up/left of the ink.
 
+\ Art ported from the PICO-8 cart (depth.p8) at 5/8 scale, hand-pixelled:
+\ silhouettes pooled, detail (funnels, taper, portholes) redrawn at sixel
+\ scale. Sub porthole rows distinguish the three score types; the original
+\ uses one sub sprite for both directions, so we do too. Charge and mine
+\ are 1:1 with the source art.
+
 .sprtab
     EQUW sprship        \ 0: ship, pad cols each side
-    EQUW sprsub         \ 1: submarine, pad cols each side
-    EQUW sprcharge      \ 2: depth charge, pad all round
+    EQUW sprsub0        \ 1: sub type 0 (20 pts), pad cols each side
+    EQUW sprsub1        \ 2: sub type 1 (50 pts)
+    EQUW sprsub2        \ 3: sub type 2 (80 pts)
+    EQUW sprcharge      \ 4: depth charge, pad rows above/below
+    EQUW sprmine        \ 5: mine, pad rows above/below
 
 .sprship
     EQUB 22, 5
-    EQUB %00000000, %00110000, %00000000   \ ..........##..........
-    EQUB %00000001, %11110001, %10000000   \ .......#####...##.....
+    EQUB %00000000, %01101100, %00000000   \ .........##.##........
+    EQUB %01111111, %11111111, %11111000   \ .####################.
+    EQUB %01111111, %11111111, %11111000   \ .####################.
     EQUB %00111111, %11111111, %11110000   \ ..##################..
-    EQUB %00111111, %11111111, %11100000   \ ..#################...
-    EQUB %00011111, %11111111, %10000000   \ ...##############.....
+    EQUB %00001111, %11111111, %11000000   \ ....##############....
 
-.sprsub
-    EQUB 17, 9
-    EQUB %00000001, %10000000, %00000000   \ .......##........
-    EQUB %00000011, %11000000, %00000000   \ ......####.......
-    EQUB %00000011, %11000000, %00000000   \ ......####.......
-    EQUB %00000011, %11000000, %00000000   \ ......####.......
+.sprsub0
+    EQUB 17, 7
+    EQUB %00000000, %10000000, %00000000   \ ........#........
+    EQUB %00000000, %10000000, %00000000   \ ........#........
+    EQUB %00011111, %11111100, %00000000   \ ...###########...
     EQUB %00111111, %11111110, %00000000   \ ..#############..
+    EQUB %01111101, %01011111, %00000000   \ .#####.#.#.#####.
     EQUB %01111111, %11111111, %00000000   \ .###############.
+    EQUB %00111111, %11111110, %00000000   \ ..#############..
+
+.sprsub1
+    EQUB 17, 7
+    EQUB %00000000, %10000000, %00000000   \ ........#........
+    EQUB %00000000, %10000000, %00000000   \ ........#........
+    EQUB %00011111, %11111100, %00000000   \ ...###########...
+    EQUB %00111111, %11111110, %00000000   \ ..#############..
+    EQUB %01111010, %10101111, %00000000   \ .####.#.#.#.####.
     EQUB %01111111, %11111111, %00000000   \ .###############.
-    EQUB %00111111, %11111100, %00000000   \ ..############...
-    EQUB %00011111, %11111000, %00000000   \ ...##########....
+    EQUB %00111111, %11111110, %00000000   \ ..#############..
+
+.sprsub2
+    EQUB 17, 7
+    EQUB %00000000, %10000000, %00000000   \ ........#........
+    EQUB %00000000, %10000000, %00000000   \ ........#........
+    EQUB %00011111, %11111100, %00000000   \ ...###########...
+    EQUB %00111111, %11111110, %00000000   \ ..#############..
+    EQUB %01111110, %00111111, %00000000   \ .######...######.
+    EQUB %01111111, %11111111, %00000000   \ .###############.
+    EQUB %00111111, %11111110, %00000000   \ ..#############..
 
 .sprcharge
-    EQUB 7, 7
-    EQUB %00000000                         \ .......
-    EQUB %00111000                         \ ..###..
-    EQUB %01111100                         \ .#####.
-    EQUB %01111100                         \ .#####.
-    EQUB %01111100                         \ .#####.
-    EQUB %00111000                         \ ..###..
-    EQUB %00000000                         \ .......
+    EQUB 2, 6
+    EQUB %00000000                         \ ..
+    EQUB %11000000                         \ ##
+    EQUB %11000000                         \ ##
+    EQUB %11000000                         \ ##
+    EQUB %11000000                         \ ##
+    EQUB %00000000                         \ ..
+
+.sprmine
+    EQUB 3, 5
+    EQUB %00000000                         \ ...
+    EQUB %10100000                         \ #.#
+    EQUB %01000000                         \ .#.
+    EQUB %10100000                         \ #.#
+    EQUB %00000000                         \ ...
 .end
