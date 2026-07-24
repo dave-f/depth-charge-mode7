@@ -6,6 +6,11 @@ MODE 7
 HIMEM=&7500
 *LOAD PLOT
 VDU 23;8202;0;0;0;
+REM Sound envelopes (see sndtest.bas): 1 sonar,2 charge drop,3 boom,4 death
+ENVELOPE 1,131,0,0,0,0,0,0,127,-6,-2,0,126,100
+ENVELOPE 2,1,-5,0,0,18,0,0,127,-4,0,0,126,0
+ENVELOPE 3,1,0,0,0,0,0,0,127,-3,0,0,126,0
+ENVELOPE 4,2,-1,-1,-2,60,60,40,127,0,0,-2,126,126
 init%=&7500:walk%=&7512
 evt%=&7515:tab%=&7518
 REM X%=1 stays set for the per-frame OSBYTE 15,1 input buffer flush
@@ -25,11 +30,21 @@ UNTIL QT%
 *FX200,0
 MODE 7
 END
+DEF PROCsonar
+REM Fake echo: the same enveloped ping fired 3x, staggered across the tone
+REM channels (a silent sound delays each repeat) - see sndtest.bas
+SOUND 1,1,150,40
+SOUND 2,0,0,28
+SOUND 2,1,150,40
+SOUND 3,0,0,58
+SOUND 3,1,150,40
+ENDPROC
 DEF PROCattract
 PROCwipe
 PRINT TAB(13,11);CHR$(141);CHR$(135);"DEPTH CHARGE";
 PRINT TAB(13,12);CHR$(141);CHR$(135);"DEPTH CHARGE";
 PRINT TAB(11,14);CHR$(134);"PRESS SPACE TO PLAY";
+PROCsonar
 REPEAT UNTIL INKEY(-99)=0
 REPEAT
 A%=19:CALL &FFF4
@@ -77,6 +92,7 @@ IF QT%=0 THEN PROCdie
 ENDPROC
 DEF PROCdie
 LOCAL I%,B%
+SOUND 4,4,120,40
 FOR I%=1 TO 19
 B%=tab%+I%*16
 IF B%?0=1 THEN B%?6=0:B%?7=0:B%?8=0:B%?9=0
@@ -101,6 +117,7 @@ NEXT
 IF M%=0 THEN ENDPROC
 CC%=CC%+1
 PROCdc
+SOUND 2,2,120,20
 REM sink quicker than the original's rate (19)
 PROCspawn(M%,4,(SX% DIV 256)+10,16,0,38,6,77,15,64)
 ENDPROC
@@ -136,10 +153,11 @@ ST%=B%?0
 B%?0=0
 IF I%>=17 THEN ENDPROC
 IF I%>=9 THEN MN%=MN%-1:IF ST%=3 THEN DEAD%=1
+IF I%>=9 AND ST%=2 THEN SOUND 0,3,6,20
 IF I%>=9 THEN ENDPROC
 IF I%>=4 THEN CC%=CC%-1:PROCdc:ENDPROC
 REM sub: sunk scores, buys time and sinks as an effect; then relaunch
-IF ST%=3 THEN SC%=SC%+30*B%?1-10:TB%=TB%+1000:PROCscore:PROCsink(B%)
+IF ST%=3 THEN SC%=SC%+30*B%?1-10:TB%=TB%+1000:PROCscore:PROCsink(B%):SOUND 0,3,6,20
 PROCnewsub(I%)
 ENDPROC
 DEF PROCnewsub(I%)

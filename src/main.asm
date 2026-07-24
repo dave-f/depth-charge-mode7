@@ -12,5 +12,8 @@ SAVE "PLOT", start, end
 
 PUTBASIC "src/game.bas", "MAIN"
 
+\ Standalone sound-test menu (audition the 4 SOUND envelopes): CHAIN"SND"
+PUTBASIC "src/sndtest.bas", "SND"
+
 \ Boot with CHAIN, not beebasm's -boot (which *RUNs — wrong for a BASIC file)
 PUTTEXT "src/boot.txt", "!Boot", 0, 0
