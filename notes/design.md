@@ -63,10 +63,15 @@ Mode 7: 40×25 chars = 80×75 sixels (2×3 per cell). Screen memory at &7C00, 1K
 - Sprite routine: sixel (x,y) → cell address + bit within graphics char; OR to draw,
   AND-mask to erase. Graphics chars are &20 + 6-bit sixel pattern (bit 6 always set
   for the graphics range &A0+... check exact encoding when implementing).
-- Sound: 4 effects to port (fire, explosion, death, reset jingle) via SOUND/ENVELOPE;
-  noise channel for explosions. PICO-8 cart sfx 0,2,3,4 (sfx 1 unused in original).
+- Sound: done (see `src/game.bas` init block and `src/sndtest.bas`). The original's
+  4 effects were fire, explosion, death, reset jingle (cart sfx 0,2,3,4); the port
+  swaps the jingle for a sonar ping on the title screen.
 
 ## Gameplay parity checklist (from depth.p8 v1.1)
+
+*Superseded where it conflicts with the locked decisions above: the port fields
+3 subs / 3 charges / 4 mines, charges drop straight down, and the title plays a
+sonar ping in place of the reset jingle. Kept as the record of the original.*
 
 - 60s timer, +10s per sub sunk; scores 20/50/80 by sub type
 - Max 5 charges in flight, 5 subs, 8 mines; 6 lanes with occupancy flags

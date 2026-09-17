@@ -22,9 +22,10 @@ session high score. Compared to the original it fields 3 subs / 3 charges /
 4 mines (the Beeb's 75 sixels of water want a less crowded ocean than 128px did)
 and drops straight down rather than lobbing left/right.
 
-Still to come: sound effects, and maybe the original's particle puffs and
-charge bubble animation. Design decisions and layout maths live in
-[notes/design.md](notes/design.md).
+Sound is in: four `ENVELOPE`s (sonar ping on the title, charge drop, explosion,
+death), with a standalone audition menu on the disc (`CHAIN"SND"`). Still to come,
+maybe: the original's particle puffs and charge bubble animation. Design decisions
+and layout maths live in [notes/design.md](notes/design.md).
 
 ## Controls
 
