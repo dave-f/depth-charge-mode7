@@ -19,9 +19,19 @@
   ~40ms, and two `OSBYTE 19`s slip to 3 fields as soon as the work exceeds
   one. Fix: a machine-code `frame` entry does the vsync wait (EVNTV counter,
   full 40ms budget), key scan, steering and fire edge-detect, then walks;
-  the walker queues expired/hit slot numbers so BASIC handles only those;
-  `PROCspawn` uses 4-byte pokes. BASIC's loop is 6 statements. Result:
-  50 frames per 100 fields, Model B and Master. Code moved to &7400.
+  the walker queues expired/hit slot numbers so BASIC handles only those.
+  That got quiet play to 50 frames per 100 fields but a kill still cost
+  ~135ms of BASIC (a BBC BASIC line profiler, `test/profile.mjs`, showed
+  PRINT TAB/STR$ at 7-11ms each, RND at 3-4ms, ~1ms per plain statement).
+  So the rules moved into the machine code too: charges drop on the SPACE
+  edge, mines launch on a 1%/frame LFSR roll per sub, subs respawn when
+  they leave or sink, a sunk sub leaves a wreck effect and adds 10s, the
+  clock counts frames, and `hudnum` writes TIME/DC digits into screen
+  memory. BASIC is left with scoring, sounds, attract and death: a
+  four-statement loop, ~10ms a frame, ~25ms on a kill. Result: 50/50
+  frames on Model B and Master; in 30s of play with kills, 5 frames ran
+  0-8ms over budget on the B (a late start, not a dropped frame). PLOT now
+  lives at &7100 (HIMEM=&7100) with ~250 bytes spare under the screen.
 
 Ported from the PICO-8 original (128×128, 30fps). Reference implementation:
 `C:\Dev\depth-charge\depth.p8` (v1.1 — includes the mine-launch fix; left- and

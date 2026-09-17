@@ -20,29 +20,45 @@
 \       two vsync events have passed (25Hz lock with a full 40ms budget;
 \       two OSBYTE 19s would slip to 3 fields whenever BASIC's work ran
 \       past one), flushes the keyboard buffer, scans Z/X/SPACE/Q,
-\       steers the ship (slot 0 x +-0.75 sixel, clamped 6..57), then falls
-\       into the walker. Reports to BASIC through frmflg (see below).
+\       steers the ship (slot 0 x +-0.75 sixel, clamped 6..57), drops a
+\       charge on a SPACE press (max 3 wet), rolls each sub's 1%/frame
+\       mine launch, runs the game clock (secs counts down once every 25
+\       frames), then falls into the walker. It keeps the HUD's TIME and
+\       DC fields up to date itself (via hudnum) and reports the rest to
+\       BASIC through frmflg and the event queue (see below).
+\   +24 hudnum: ?&70 = column, ?&71 = row, &72/&73 = value 0-65535;
+\       writes the decimal digits straight into screen memory, padded
+\       with spaces to 5 cells (a BASIC PRINT TAB/STR$ costs ~10ms).
+\   +27 subspawn: ?&70 = sub slot 1-3; (re)spawns a random sub there:
+\       type 1-3, from the left or right edge, speed 10..57/256 a frame.
+\       The walker calls the same code itself when a sub leaves or sinks.
 \ No clipping: sprites must lie fully on screen.
 \
 \ Frame bytes after the jump table (BASIC peeks/pokes these):
-\   objevt  count of expiries/hits since BASIC last cleared it; their
-\           slot numbers are in evq (after the object table, NSLOTS bytes)
-\   frmflg  set fresh by frame: bit 0 SPACE just pressed (rising edge),
-\           bit 1 Q held, bit 2 slow tick (every 4th frame - for the
-\           mine-launch roll, so BASIC needn't run it every frame)
+\   objevt  events queued since BASIC last cleared it; the codes are in
+\           evq (after the object table, NSLOTS bytes): 1-3 a sub of that
+\           type was sunk (score it), 5 a mine fizzled at the surface
+\           (sound), 6 a mine hit the ship (death). Charges, sub expiry,
+\           respawns and wreck effects never reach BASIC.
+\   frmflg  set fresh by frame: bit 0 a charge was dropped (sound), bit 1
+\           Q held, bit 2 the clock has run out
 \   frmprv  last frame's key mask (BASIC pokes 1 at game start so the
 \           SPACE that started the game doesn't also drop a charge)
-\   frmcnt  frame counter          frmkey  this frame's key mask
+\   frmkey  this frame's key mask (bits: 0 SPACE, 1 Z, 2 X, 3 Q)
 \   vsync   vsync events since the last frame (bumped by evhandler)
+\   nchg    charges in the water (0-3); BASIC shows 3-nchg on the HUD
 \   evaddr  EQUW evhandler: BASIC copies it to EVNTV (&220) and enables
 \           the vsync event with *FX14,4 (and *FX13,4 on the way out)
-\   Key mask bits: 0 SPACE, 1 Z, 2 X, 3 Q.
+\   rng     16-bit LFSR state for spawns; BASIC seeds it (!rng = TIME OR 1,
+\           a 4-byte poke that spills harmlessly into the pad after it)
+\   secs    seconds left; BASIC sets 60 at the start, a kill adds 10 (max 255)
+\   tick    frames until the next second (25)
 \
 \ Object table (20 slots of 16 bytes at objtab; poke from BASIC):
-\   +0 status: 0 free, 1 active, 2 expired, 3 hit (walker sets 2/3 after
-\      erasing the sprite; BASIC handles then clears). Each time, the slot
-\      number is queued in evq[objevt] and objevt bumped, so BASIC PEEKs
-\      one byte per frame and then visits only the slots that changed.
+\   +0 status: 0 free, 1 active. The walker erases and frees an object
+\      that expires or is hit, then acts by slot range: subs respawn,
+\      charges decrement nchg and redraw DC, mines queue event 5 (expired)
+\      or 6 (hit the ship), effects just go. BASIC only reads the queue.
 \   +1 sprite id           +2/+3  x lo/hi (8.8 fixed, hi = sixel)
 \   +4/+5 y lo/hi          +6/+7  vx lo/hi (signed 8.8, <1 sixel/frame)
 \   +8/+9 vy lo/hi         +10/+11 last drawn sixel x/y (255 = never)
@@ -55,8 +71,11 @@
 \ walker box-tests charge slots against sub slots and mine slots against
 \ the ship, on INK boxes (sprite header ink fields, so pads never hit).
 \ Both parties of a charge/sub hit (the mine only, for mine/ship) are
-\ erased and set to status 3. Slots: 0 ship, 1-3 subs, 4-8 charges,
-\ 9-16 mines, 17-19 free for effects.
+\ erased and freed. Slots: 0 ship, 1-3 subs, 4-6 charges (7-8 spare),
+\ 9-12 mines (13-16 spare), 17-19 effects: when a charge sinks a sub,
+\ the collision pass copies the sub into a free effect slot, sinking
+\ (vy 38/256) to y+10 (max 61), adds 10 seconds to the clock, queues
+\ the sub's type for BASIC to score, and respawns the sub.
 \
 \ Sprite format: EQUB width, height, ink-x, ink-y, ink-w, ink-h, then
 \ height rows of CEIL(width/8) bytes, MSB first (leftmost sixel = bit 7).
@@ -90,6 +109,8 @@ zpboxa = &84        \ &84-&87: box A x1,x2,y1,y2 (collision pass)
 zpboxb = &88        \ &88-&8B: box B x1,x2,y1,y2
 zpgb   = &8C        \ &8C/&8D: loadbox/eraseslot slot pointer
 zpoth  = &8E        \ &8E/&8F: collision inner-loop slot pointer
+zpeff  = &84        \ &84/&85: sinksub's effect-slot pointer (the collision
+                    \  boxes at &84-&8B are dead once a hit is found)
 
 osbyte   = &FFF4
 
@@ -101,6 +122,15 @@ CHG0     = 4
 NCHGS    = 5
 MINE0    = 9
 NMINES   = 8
+EFF0     = 17
+NEFFS    = 3
+NCHGUSE  = 3        \ charge/mine slots actually in play
+NMINEUSE = 4
+EV_FIZZ  = 5        \ event codes for BASIC (1-3 = a sub of that type sunk)
+EV_HIT   = 6
+TPL_CHG  = 0        \ spawn templates: offsets into tpls
+TPL_MINE = 10
+TPL_SUB  = 20
 
 .start
     JMP initrow
@@ -111,32 +141,46 @@ NMINES   = 8
     JMP sprmove
     JMP objwalk
     JMP frame
+    JMP hudnum
+    JMP subspawn
+    EQUB 0, 0       \ pad: data at +&20
 
 .objevt
-    EQUB 0          \ count of expiries since BASIC last cleared it
+    EQUB 0          \ events queued since BASIC last cleared it
 .frmflg
     EQUB 0
 .frmprv
-    EQUB 0
-.frmcnt
     EQUB 0
 .frmkey
     EQUB 0
 .vsync
     EQUB 0
+.nchg
+    EQUB 0
 .evaddr
     EQUW evhandler
+.rng
+    EQUW &ACE1      \ any non-zero seed; BASIC reseeds from TIME
+    SKIP 4          \ pad (BASIC's 4-byte poke of rng spills here)
+.secs
+    EQUB 0
+.tick
+    EQUB 25
 .objtab
     SKIP NSLOTS * SLOTSIZE
 .evq
-    SKIP NSLOTS         \ slot numbers of this frame's expiries/hits
+    SKIP NSLOTS         \ this frame's event codes
 
-ASSERT objevt = &7418
-ASSERT frmflg = &7419
-ASSERT frmprv = &741A
-ASSERT evaddr = &741E
-ASSERT objtab = &7420
-ASSERT evq    = &7560
+ASSERT objevt = &7120
+ASSERT frmflg = &7121
+ASSERT frmprv = &7122
+ASSERT nchg   = &7125
+ASSERT evaddr = &7126
+ASSERT rng    = &7128
+ASSERT secs   = &712E
+ASSERT tick   = &712F
+ASSERT objtab = &7130
+ASSERT evq    = &7270
 
 .initrow                \ colour code(s) at the left, blank graphics after
     LDY zpy
@@ -410,13 +454,28 @@ ASSERT evq    = &7560
     JSR sprgo           \ erase at last drawn position
 .owfree
     LDY #0
-    LDA #2
-    STA (zpslot),Y
-    LDA zpslot          \ queue it for BASIC
-    STA zpgb
-    LDA zpslot+1
-    STA zpgb+1
-    JSR pushslot
+    LDA #0
+    STA (zpslot),Y      \ freed; now by slot range (index = NSLOTS - zpcnt)
+    LDA #NSLOTS
+    SEC
+    SBC zpcnt
+    BEQ ownext          \ 0: the ship (never expires in practice)
+    CMP #CHG0
+    BCC owsub
+    CMP #MINE0
+    BCC owchg
+    CMP #EFF0
+    BCS ownext          \ effect: just gone
+    LDA #EV_FIZZ        \ mine reached the surface
+    JSR pushev
+    JMP ownext
+.owchg
+    DEC nchg            \ charge sank out of range
+    JSR showdc
+    JMP ownext
+.owsub
+    TAX                 \ sub left the screen: straight back in
+    JSR respawn
 .ownext
     CLC
     LDA zpslot
@@ -443,7 +502,9 @@ ASSERT evq    = &7560
     LDY #0
     LDA (zpslot),Y
     CMP #1
-    BNE chgnext
+    BEQ chgactive
+    JMP chgnext         \ (the hit path below is too long for a branch)
+.chgactive
     LDA zpslot          \ charge ink box -> A
     STA zpgb
     LDA zpslot+1
@@ -469,28 +530,42 @@ ASSERT evq    = &7560
     JSR loadbox
     JSR boxhit
     BEQ subnext
-    LDA zpslot          \ hit: erase and mark both, charge is spent
+    LDA zpslot          \ hit: the charge is spent
     STA zpgb
     LDA zpslot+1
     STA zpgb+1
     JSR eraseslot       \ (clobbers zpwm - we leave the sub loop anyway)
     LDY #0
-    LDA #3
+    TYA
     STA (zpslot),Y
-    LDA zpoth
-    STA zpgb
+    DEC nchg
+    JSR showdc
+    LDA zpoth           \ the sub: erase, leave a wreck, tell BASIC its
+    STA zpgb            \ type to score, 10 seconds on the clock, respawn
     LDA zpoth+1
     STA zpgb+1
     JSR eraseslot
-    LDY #0
-    LDA #3
-    STA (zpoth),Y
-    JSR pushslot        \ (zpgb) is the sub; then the charge
-    LDA zpslot
-    STA zpgb
-    LDA zpslot+1
-    STA zpgb+1
-    JSR pushslot
+    JSR sinksub
+    LDY #1
+    LDA (zpoth),Y
+    JSR pushev
+    LDA secs
+    CMP #246
+    BCS hitnobonus      \ clock capped at 255
+    CLC
+    ADC #10
+    STA secs
+.hitnobonus
+    JSR showtime
+    LDA zpoth           \ slot index from the pointer (the subs share
+    SEC                 \ objtab's page)
+    SBC #LO(objtab)
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    TAX
+    JSR respawn
     JMP chgnext
 .subnext
     CLC
@@ -552,9 +627,10 @@ ASSERT evq    = &7560
     STA zpgb+1
     JSR eraseslot
     LDY #0
-    LDA #3
+    TYA
     STA (zpslot),Y
-    JSR pushslot
+    LDA #EV_HIT
+    JSR pushev
 .minnext
     CLC
     LDA zpslot
@@ -569,31 +645,127 @@ ASSERT evq    = &7560
 .coldone
     RTS
 
-.pushslot               \ evq[objevt++] = slot number of (zpgb); full = drop
+.pushev                 \ evq[objevt++] = event code in A; full = dropped
     LDX objevt
     CPX #NSLOTS
     BCS pushfull
-    SEC
-    LDA zpgb
-    SBC #LO(objtab)
-    TAY                 \ Y = low byte of the offset
-    LDA zpgb+1
-    SBC #HI(objtab)     \ A = high byte (0 or 1)
-    ASL A
-    ASL A
-    ASL A
-    ASL A
-    STA evq,X
-    TYA
-    LSR A
-    LSR A
-    LSR A
-    LSR A
-    ORA evq,X           \ offset / 16
     STA evq,X
     INC objevt
 .pushfull
     RTS
+
+.sinksub                \ sub (zpoth) was sunk: copy it into a free effect
+                        \ slot as a sinking wreck (no free slot: no wreck)
+    LDX #EFF0
+    LDY #NEFFS
+    JSR findfree
+    BCC sinkdone
+    LDY #1              \ +1..+7 sprite, x, y, vx: as the sub had them
+.sinkcopy
+    LDA (zpoth),Y
+    STA (zpgb),Y
+    INY
+    CPY #8
+    BNE sinkcopy
+    LDA #38             \ +8/+9 vy = 38/256 sixel/frame
+    STA (zpgb),Y
+    INY
+    LDA #0
+    STA (zpgb),Y
+    INY
+    LDA #&FF            \ +10/+11 last drawn: never (the sub was just erased)
+    STA (zpgb),Y
+    INY
+    STA (zpgb),Y
+    INY
+    LDA #6              \ +12/+13 xmin/xmax as a sub's
+    STA (zpgb),Y
+    INY
+    LDA #62
+    STA (zpgb),Y
+    INY
+    LDA #0              \ +14 ymin
+    STA (zpgb),Y
+    LDY #5
+    LDA (zpoth),Y       \ +15 ymax = sub y + 10, capped so the wreck stays
+    CLC                 \  above the sea floor
+    ADC #10
+    CMP #62
+    BCC sinkcap
+    LDA #61
+.sinkcap
+    LDY #15
+    STA (zpgb),Y
+    LDY #0
+    LDA #1
+    STA (zpgb),Y
+.sinkdone
+    RTS
+
+.slotptr                \ X = slot index -> (zpgb) = its slot
+    TXA
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    CLC
+    ADC #HI(objtab)
+    STA zpgb+1
+    TXA
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    CLC
+    ADC #LO(objtab)
+    STA zpgb
+    BCC slotok
+    INC zpgb+1
+.slotok
+    RTS
+
+.findfree               \ X = first slot, Y = how many: C set and (zpgb) = the
+    STY zpodd           \ first free one, else C clear. X ends on the slot found.
+    JSR slotptr
+.ffloop
+    LDY #0
+    LDA (zpgb),Y
+    BEQ fffound
+    CLC
+    LDA zpgb
+    ADC #SLOTSIZE
+    STA zpgb
+    BCC ffsame
+    INC zpgb+1
+.ffsame
+    INX
+    DEC zpodd
+    BNE ffloop
+    CLC
+    RTS
+.fffound
+    SEC
+    RTS
+
+.copytpl                \ (zpgb) +6..+15 = template X: vx, vy, last drawn, box
+    LDY #6
+.ctloop
+    LDA tpls,X
+    STA (zpgb),Y
+    INX
+    INY
+    CPY #16
+    BNE ctloop
+    RTS
+
+.tpls
+    EQUB 0,0, 38,0, &FF,&FF, 6,77,15,64     \ charge: sinks at 38/256 (the
+                                            \  original's 19 felt slow here)
+    EQUB 0,0, &DA,&FF, &FF,&FF, 6,77,13,74  \ mine: rises at -38/256; ymin 13
+                                            \  so its ink reaches the hull
+    EQUB 0,0, 0,0, &FF,&FF, 6,62,0,74       \ sub (vx set by respawn)
+.bandy
+    EQUB 0, 24, 42, 60  \ sub patrol bands (drawn y) by slot
 
 .loadbox                \ (zpgb) = slot; X = 0 -> box A, 4 -> box B
     LDY #1
@@ -733,11 +905,18 @@ ASSERT evq    = &7560
     LDA #0
     STA objtab+2
 .frnoright
-    LDA frmprv          \ flags bit 0: SPACE rising edge
+    LDA #0
+    STA frmflg
+    LDA frmprv          \ SPACE rising edge -> drop a charge
     EOR #&FF
     AND frmkey
     AND #1
+    BEQ frnofire
+    JSR dropchg
+    BCC frnofire        \ three already wet: nothing dropped
+    LDA #1              \ flags bit 0: a charge was dropped
     STA frmflg
+.frnofire
     LDA frmkey
     STA frmprv
     AND #8              \ flags bit 1: Q held
@@ -746,15 +925,282 @@ ASSERT evq    = &7560
     ORA #2
     STA frmflg
 .frnoquit
-    INC frmcnt          \ flags bit 2: every 4th frame
-    LDA frmcnt
-    AND #3
-    BNE frnoslow
+    LDA secs            \ the clock: a second every 25 frames, stops at 0
+    BEQ frnosec
+    DEC tick
+    BNE frnosec
+    LDA #25
+    STA tick
+    DEC secs
+    BNE frshowt
     LDA frmflg
-    ORA #4
+    ORA #4              \ flags bit 2: time is up
     STA frmflg
-.frnoslow
+.frshowt
+    JSR showtime
+.frnosec
+    LDX #SUB0           \ each active sub rolls for a mine launch
+.frmine
+    JSR slotptr
+    LDY #0
+    LDA (zpgb),Y
+    CMP #1
+    BNE frminenext
+    JSR rnd             \ 16-bit roll < 655 = 1.0%/frame, as the original
+    STA zpw
+    JSR rnd
+    CMP #2
+    BCC frlaunch
+    BNE frminenext
+    LDA zpw
+    CMP #143
+    BCS frminenext
+.frlaunch
+    JSR launch
+.frminenext
+    INX
+    CPX #SUB0+NSUBS
+    BNE frmine
     JMP objwalk
+
+.dropchg                \ SPACE: a charge under the ship; C set if dropped
+    LDA nchg
+    CMP #NCHGUSE
+    BCS dropno
+    LDX #CHG0
+    LDY #NCHGUSE
+    JSR findfree
+    BCC dropno
+    LDX #TPL_CHG
+    JSR copytpl         \ sinks at 38/256, box 6..77 x 15..64
+    LDY #1
+    LDA #4              \ charge sprite
+    STA (zpgb),Y
+    LDY #2
+    LDA #0
+    STA (zpgb),Y
+    LDY #4
+    STA (zpgb),Y
+    LDY #3
+    LDA objtab+3        \ x = ship x + 10
+    CLC
+    ADC #10
+    STA (zpgb),Y
+    LDY #5
+    LDA #16             \ y = 16: just under the hull
+    STA (zpgb),Y
+    LDY #0
+    LDA #1
+    STA (zpgb),Y
+    INC nchg
+    JSR showdc
+    SEC
+    RTS
+.dropno
+    CLC
+    RTS
+
+.launch                 \ a mine from sub (zpgb), X preserved
+    LDA zpgb
+    STA zpeff
+    LDA zpgb+1
+    STA zpeff+1
+    TXA
+    PHA
+    LDX #MINE0
+    LDY #NMINEUSE
+    JSR findfree
+    BCC launchdone      \ four already up
+    LDX #TPL_MINE
+    JSR copytpl         \ rises at -38/256, box 6..77 x 13..74
+    LDY #1
+    LDA #5              \ mine sprite
+    STA (zpgb),Y
+    LDY #2
+    LDA #0
+    STA (zpgb),Y
+    LDY #4
+    STA (zpgb),Y
+    LDY #3
+    LDA (zpeff),Y       \ x = sub x + 7 (the conning tower)
+    CLC
+    ADC #7
+    STA (zpgb),Y
+    LDY #5
+    LDA (zpeff),Y       \ y = sub y - 5
+    SEC
+    SBC #5
+    STA (zpgb),Y
+    LDY #0
+    LDA #1
+    STA (zpgb),Y
+.launchdone
+    PLA
+    TAX
+    RTS
+
+.subspawn               \ BASIC entry: ?&70 = sub slot 1-3
+    LDX zpx
+.respawn                \ X = sub slot 1-3: a new random sub in it
+    JSR slotptr
+    TXA
+    PHA
+    LDX #TPL_SUB
+    JSR copytpl         \ vy 0, never drawn, box 6..62 x 0..74
+    PLA
+    TAX
+    LDY #5
+    LDA bandy,X         \ y = the slot's patrol band
+    STA (zpgb),Y
+    LDA #0
+    LDY #4
+    STA (zpgb),Y
+    LDY #2
+    STA (zpgb),Y
+.rstype
+    JSR rnd             \ type 1-3, uniform (reject 0)
+    AND #3
+    BEQ rstype
+    LDY #1
+    STA (zpgb),Y
+.rsspeed
+    JSR rnd             \ speed 10..57 /256 a frame (reject 48-63)
+    AND #63
+    CMP #48
+    BCS rsspeed
+    CLC
+    ADC #10
+    STA zpw
+    JSR rnd
+    AND #1
+    BNE rsleft
+    LDY #3              \ from the left edge, heading right
+    LDA #6
+    STA (zpgb),Y
+    LDY #6
+    LDA zpw
+    STA (zpgb),Y
+    INY
+    LDA #0
+    STA (zpgb),Y
+    JMP rsgo
+.rsleft
+    LDY #3              \ from the right edge, heading left
+    LDA #62
+    STA (zpgb),Y
+    LDY #6
+    LDA #0
+    SEC
+    SBC zpw
+    STA (zpgb),Y
+    INY
+    LDA #&FF
+    STA (zpgb),Y
+.rsgo
+    LDY #0
+    LDA #1
+    STA (zpgb),Y
+    RTS
+
+.rnd                    \ 16-bit Galois LFSR (taps &B400) -> A = next byte
+    LSR rng+1
+    ROR rng
+    BCC rnddone
+    LDA rng+1
+    EOR #&B4
+    STA rng+1
+.rnddone
+    LDA rng
+    RTS
+
+.showtime               \ HUD TIME field <- secs
+    LDA #8
+    STA zpx
+    LDA secs
+    STA zparg
+    LDA #1
+    STA zpy
+    LDA #0
+    STA zpmode
+    JMP hudnum
+
+.showdc                 \ HUD DC field <- 3 - nchg
+    LDA #20
+    STA zpx
+    LDA #3
+    SEC
+    SBC nchg
+    STA zparg
+    LDA #1
+    STA zpy
+    LDA #0
+    STA zpmode
+    JMP hudnum
+
+.hudnum                 \ ?&70 col, ?&71 row, &72/&73 value -> 5 cells
+    LDY zpy
+    LDA rowlo,Y
+    STA zprow
+    LDA rowhi,Y
+    STA zprow+1
+    LDA zpx
+    CLC
+    ADC #5
+    STA zpwm            \ column to pad up to
+    LDY zpx
+    LDX #0              \ 10000, 1000, 100, 10
+    STX zph             \ has a digit been written yet?
+.hnpow
+    LDA #0
+    STA zpw             \ this digit
+.hnsub
+    LDA zparg           \ value >= power? (16-bit compare)
+    CMP pow10lo,X
+    LDA zpmode
+    SBC pow10hi,X
+    BCC hnnext
+    LDA zparg           \ value -= power
+    SEC
+    SBC pow10lo,X
+    STA zparg
+    LDA zpmode
+    SBC pow10hi,X
+    STA zpmode
+    INC zpw
+    JMP hnsub
+.hnnext
+    LDA zpw
+    BNE hnemit
+    LDA zph
+    BEQ hnskip          \ leading zero
+    LDA #0
+.hnemit
+    ORA #&30
+    STA (zprow),Y
+    INY
+    LDA #1
+    STA zph
+.hnskip
+    INX
+    CPX #4
+    BNE hnpow
+    LDA zparg           \ units, always written
+    ORA #&30
+    STA (zprow),Y
+    INY
+.hnpad
+    CPY zpwm
+    BCS hndone
+    LDA #&20
+    STA (zprow),Y
+    INY
+    JMP hnpad
+.hndone
+    RTS
+.pow10lo
+    EQUB LO(10000), LO(1000), LO(100), LO(10)
+.pow10hi
+    EQUB HI(10000), HI(1000), HI(100), HI(10)
 
 .evhandler              \ EVNTV: A = event number; 4 = vsync
     PHA

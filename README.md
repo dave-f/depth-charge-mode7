@@ -37,23 +37,32 @@ and layout maths live in [notes/design.md](notes/design.md).
 
 ## How it works
 
-- **Engine** (`src/sixel.asm`, 6502 via BeebAsm): sixel plot/unplot, a
-  data-driven sprite blitter with an opaque "move" mode (draw + self-erase in
-  one pass — no tearing), and an object walker: a 20-slot table of fixed-point
-  positions/velocities integrated, bounds-checked, collision-tested (ink-box
-  overlap) and redrawn-on-move in a single `CALL` per frame.
-- **Game logic** (`src/game.bas`, BBC BASIC kept as plain text in git,
-  tokenised onto the disc at build time by BeebAsm's `PUTBASIC`): spawning,
-  scoring, and the attract/death loop. The per-frame work — vsync lock, key
-  scan, steering, fire edge-detect — is a single machine-code `frame` entry
-  that falls into the walker; it and the walker report back through two flag
-  bytes, so BASIC's frame loop is six statements. Locked to 25Hz by counting
-  vsync events (EVNTV), which gives the full 40ms budget; measured at 50
-  frames per 100 fields in play.
+- **Engine and rules** (`src/sixel.asm`, 6502 via BeebAsm): sixel
+  plot/unplot, a data-driven sprite blitter with an opaque "move" mode (draw +
+  self-erase in one pass — no tearing), and an object walker: a 20-slot table
+  of fixed-point positions/velocities integrated, bounds-checked,
+  collision-tested (ink-box overlap) and redrawn-on-move. One `frame` entry
+  per game frame does the lot: locks to 25Hz by counting vsync events (EVNTV),
+  scans the keys, steers, drops charges, rolls each sub's mine launch (16-bit
+  LFSR), runs the clock, then walks and collides. Subs respawn themselves, a
+  sunk sub leaves a sinking wreck, and the TIME and DC fields are written
+  straight into screen memory by a small number printer.
+- **Director** (`src/game.bas`, BBC BASIC kept as plain text in git,
+  tokenised onto the disc at build time by BeebAsm's `PUTBASIC`): scoring,
+  sounds, the attract screen and the death sequence, driven by a flag byte
+  and a short event queue from the machine code. Its frame loop is four
+  statements. BBC BASIC turned out to manage roughly one statement a
+  millisecond and 7-11ms for a `PRINT` with `STR$`, so anything that must
+  happen every frame lives in the machine code. Measured: 50 frames per 100
+  fields on a Model B and a Master, with kills the only frames that brush the
+  40ms budget.
 - **Test harness** (`test/probe.mjs`, Node): boots the disc headlessly in
   jsbeeb, plays a key script, dumps the Mode 7 screen as text, screenshots,
   and counts walker calls per field. `npm install` once, then e.g.
-  `node test/probe.mjs --script "SPACE:3,.:100" --rate 100 --txt`.
+  `node test/probe.mjs --script "SPACE:3,.:100" --rate 100 --txt`. Alongside
+  it: `gaps.mjs` (BASIC work per frame type), `profile.mjs` (a BBC BASIC line
+  profiler, sampling the interpreter's statement pointer), `bench.mjs`
+  (statement costs) and `serve.mjs` (serve the disc to the public jsbeeb).
 - Sprites are ported from the PICO-8 cart's sheet at 5/8 scale, hand-pixelled.
 
 ## Building / running
