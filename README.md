@@ -6,6 +6,13 @@ entirely in teletext — Mode 7, the Beeb's 1KB text mode, coaxed into being a g
 The original is a PICO-8 take on the old arcade classic, also playable on the
 [Lexaloffle BBS](https://www.lexaloffle.com/bbs/?tid=4045) (`load #depthcharge` in PICO-8).
 
+<p align="center">
+  <img src="screenshots/play.png" alt="In play: three charges dropping, a sunk sub sinking through the lanes, mines rising" width="49%">
+  <img src="screenshots/title.png" alt="Title screen" width="49%">
+</p>
+
+*Captured from jsbeeb by the headless test harness (`test/probe.mjs --png`).*
+
 ## Why Mode 7?
 
 For the novelty, mostly. Teletext gives you 40×25 characters; with sixel graphics
