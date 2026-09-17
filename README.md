@@ -43,10 +43,17 @@ and layout maths live in [notes/design.md](notes/design.md).
   positions/velocities integrated, bounds-checked, collision-tested (ink-box
   overlap) and redrawn-on-move in a single `CALL` per frame.
 - **Game logic** (`src/game.bas`, BBC BASIC kept as plain text in git,
-  tokenised onto the disc at build time by BeebAsm's `PUTBASIC`): input,
-  spawning, scoring, and the attract/death loop — the walker reports expiries
-  and hits through one event byte, so BASIC's frame cost is a handful of
-  statements. Locked to 25Hz by double vsync.
+  tokenised onto the disc at build time by BeebAsm's `PUTBASIC`): spawning,
+  scoring, and the attract/death loop. The per-frame work — vsync lock, key
+  scan, steering, fire edge-detect — is a single machine-code `frame` entry
+  that falls into the walker; it and the walker report back through two flag
+  bytes, so BASIC's frame loop is six statements. Locked to 25Hz by counting
+  vsync events (EVNTV), which gives the full 40ms budget; measured at 50
+  frames per 100 fields in play.
+- **Test harness** (`test/probe.mjs`, Node): boots the disc headlessly in
+  jsbeeb, plays a key script, dumps the Mode 7 screen as text, screenshots,
+  and counts walker calls per field. `npm install` once, then e.g.
+  `node test/probe.mjs --script "SPACE:3,.:100" --rate 100 --txt`.
 - Sprites are ported from the PICO-8 cart's sheet at 5/8 scale, hand-pixelled.
 
 ## Building / running

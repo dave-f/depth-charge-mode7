@@ -1,19 +1,24 @@
 REM Depth Charge (Mode 7) - port of the PICO-8 original
 REM Z/X steer, SPACE drops a charge (max 3), Q quits
 REM Speeds are original px/frame@30 converted to sixels/frame@25Hz (x0.75)
+REM Per-frame work (vsync, keys, steering) is in the PLOT code's frame%
+REM entry; BASIC here only reacts to its flag bytes (see sixel.asm header)
 MODE 7
 *FX200,3
-HIMEM=&7500
+HIMEM=&7400
 *LOAD PLOT
 VDU 23;8202;0;0;0;
+REM frame% counts vsync events: point EVNTV at its handler, enable them
+?&220=?&741E:?&221=?&741F
+*FX14,4
 REM Sound envelopes (see sndtest.bas): 1 sonar,2 charge drop,3 boom,4 death
 ENVELOPE 1,131,0,0,0,0,0,0,127,-6,-2,0,126,100
 ENVELOPE 2,1,-5,0,0,18,0,0,127,-4,0,0,126,0
 ENVELOPE 3,1,0,0,0,0,0,0,127,-3,0,0,126,0
 ENVELOPE 4,2,-1,-1,-2,60,60,40,127,0,0,-2,126,126
-init%=&7500:walk%=&7512
-evt%=&7515:tab%=&7518
-REM X%=1 stays set for the per-frame OSBYTE 15,1 input buffer flush
+init%=&7400:walk%=&7412:frame%=&7415
+evt%=&7418:flg%=&7419:prv%=&741A:tab%=&7420:evq%=&7560
+REM X%=1 stays set for the attract loop's OSBYTE 15,1 input buffer flush
 X%=1
 REM lane colours on blue water: white,cyan,yellow,green,magenta,red
 DIM lane% 5
@@ -26,6 +31,7 @@ REPEAT
 PROCattract
 IF QT%=0 THEN PROCgame
 UNTIL QT%
+*FX13,4
 *FX15,1
 *FX200,0
 MODE 7
@@ -61,31 +67,27 @@ LOCAL I%
 FOR I%=1 TO 3
 PROCnewsub(I%)
 NEXT
-OS%=-1
+REM SPACE is still down from the title: mark it held so it doesn't fire
+?prv%=1
 REPEAT
-A%=19:CALL &FFF4
-A%=19:CALL &FFF4
-A%=15:CALL &FFF4
-K%=0
-IF INKEY(-98) THEN K%=-192
-IF INKEY(-67) THEN K%=192
-SX%=SX%+K%
-IF SX%<1536 THEN SX%=1536
-IF SX%>57*256 THEN SX%=57*256
-tab%?3=SX% DIV 256
-K%=INKEY(-99)
-IF K% AND OS%=0 AND CC%<3 THEN PROCdrop
-OS%=K%
-CALL walk%
+CALL frame%
+IF ?flg% THEN PROCflags
 IF ?evt% THEN PROCevents
-IF MN%<4 THEN PROCmines
-IF DEAD%=0 THEN SEC%=60-(TIME-TB%) DIV 100
-IF SEC%<0 THEN SEC%=0
-IF SEC%<>LS% THEN LS%=SEC%:PROCtime
-IF SEC%=0 THEN DEAD%=1
-IF INKEY(-17) THEN QT%=1
+SEC%=60-(TIME-TB%) DIV 100
+IF SEC%<>LS% THEN PROCtick
 UNTIL DEAD% OR QT%
 IF QT%=0 THEN PROCdie
+ENDPROC
+DEF PROCflags
+F%=?flg%
+IF (F% AND 1) AND CC%<3 THEN PROCdrop
+IF F% AND 2 THEN QT%=1
+IF (F% AND 4) AND MN%<4 THEN PROCmines
+ENDPROC
+DEF PROCtick
+IF SEC%<1 THEN SEC%=0:DEAD%=1
+LS%=SEC%
+PROCtime
 ENDPROC
 DEF PROCdie
 LOCAL I%,B%
@@ -105,64 +107,77 @@ TM%=TIME+300
 REPEAT UNTIL TIME>=TM%
 A%=15:CALL &FFF4
 ENDPROC
+REM --- spawning. These run inside the 40ms frame, so they are written for
+REM speed: no FOR scans, no 10-parameter PROCspawn (parameter passing is
+REM slow in BBC BASIC), and the slot's 4-byte fields poked as words:
+REM   !6  = vx lo/hi, vy lo/hi       !10 = &FFFF last-drawn (never) + 2 pad
+REM   !12 = xmin, xmax, ymin, ymax   (see sixel.asm object table)
 DEF PROCdrop
-LOCAL C%,M%
-M%=0
-FOR C%=4 TO 6
-IF tab%?(C%*16)=0 AND M%=0 THEN M%=C%
-NEXT
-IF M%=0 THEN ENDPROC
+REM CC%<3, so one of the charge slots 4-6 is free
+M%=4
+IF tab%?64 THEN M%=5:IF tab%?80 THEN M%=6
 CC%=CC%+1
 PROCdc
 SOUND 2,2,120,20
-REM sink quicker than the original's rate (19)
-PROCspawn(M%,4,(SX% DIV 256)+10,16,0,38,6,77,15,64)
+C%=tab%+M%*16
+REM from under the ship, sinking at 38/256 (quicker than the original's 19)
+C%?1=4:C%?2=0:C%?3=tab%?3+10:C%?4=0:C%?5=16
+C%!6=&260000
+C%!10=&FFFF
+C%!12=&400F4D06
+C%?0=1
 ENDPROC
 DEF PROCmines
-LOCAL I%,B%
-FOR I%=1 TO 3
-IF RND(100)=1 THEN B%=tab%+I%*16:IF B%?0=1 AND MN%<4 THEN PROClmine(B%)
-NEXT
+REM every 4th frame (frame% slow tick): each sub 1-in-25 = 1%/frame
+R%=RND(25)
+IF R%<4 THEN IF tab%?(R%*16)=1 THEN PROClmine(tab%+R%*16)
 ENDPROC
 DEF PROClmine(B%)
-LOCAL M%,C%
-M%=0
-FOR C%=9 TO 12
-IF tab%?(C%*16)=0 AND M%=0 THEN M%=C%
-NEXT
-IF M%=0 THEN ENDPROC
+REM MN%<4, so one of the mine slots 9-12 is free
+M%=9
+IF tab%?144 THEN M%=10:IF tab%?160 THEN M%=11:IF tab%?176 THEN M%=12
 MN%=MN%+1
-REM ymin 13: mine ink reaches the hull's bottom row before expiring
-REM rise quicker than the original's rate (-19)
-PROCspawn(M%,5,B%?3+7,B%?5-5,0,-38,6,77,13,74)
+C%=tab%+M%*16
+REM from the conning tower, rising at -38/256 (quicker than the original's
+REM -19); ymin 13 so the mine's ink reaches the hull's bottom row first
+C%?1=5:C%?2=0:C%?3=B%?3+7:C%?4=0:C%?5=B%?5-5
+C%!6=&FFDA0000
+C%!10=&FFFF
+C%!12=&4A0D4D06
+C%?0=1
+ENDPROC
+DEF PROCnewsub(I%)
+C%=tab%+I%*16
+V%=9+RND(48)
+IF RND(2)=1 THEN C%?3=62:V%=-V% ELSE C%?3=6
+C%?1=RND(3):C%?2=0:C%?4=0:C%?5=bandy%?I%
+C%!6=V% AND &FFFF
+C%!10=&FFFF
+C%!12=&4A003E06
+C%?0=1
 ENDPROC
 DEF PROCevents
-LOCAL I%,B%
-FOR I%=1 TO 19
-B%=tab%+I%*16
-IF B%?0>1 THEN PROChandle(I%,B%)
+REM the walker queues the slot numbers it expired/hit in evq%
+LOCAL I%
+FOR I%=0 TO ?evt%-1
+PROChandle(evq%?I%)
 NEXT
 ?evt%=0
 ENDPROC
-DEF PROChandle(I%,B%)
-LOCAL ST%
-ST%=B%?0
-B%?0=0
-IF I%>=17 THEN ENDPROC
-IF I%>=9 THEN MN%=MN%-1:IF ST%=3 THEN DEAD%=1
-IF I%>=9 AND ST%=2 THEN SOUND 0,3,6,20
-IF I%>=9 THEN ENDPROC
-IF I%>=4 THEN CC%=CC%-1:PROCdc:ENDPROC
+DEF PROChandle(I%)
+B%=tab%+I%*16
+ST%=B%?0:B%?0=0
+IF I%>3 THEN PROCother(I%):ENDPROC
 REM sub: sunk scores, buys time and sinks as an effect; then relaunch
 IF ST%=3 THEN SC%=SC%+30*B%?1-10:TB%=TB%+1000:PROCscore:PROCsink(B%):SOUND 0,3,6,20
 PROCnewsub(I%)
 ENDPROC
-DEF PROCnewsub(I%)
-LOCAL V%,X%
-V%=9+RND(48)
-X%=6
-IF RND(2)=1 THEN X%=62:V%=-V%
-PROCspawn(I%,RND(3),X%,bandy%?I%,V%,0,6,62,0,74)
+DEF PROCother(I%)
+REM charge expired, or a mine gone: fizzled at the surface or into the ship
+IF I%<9 THEN CC%=CC%-1:PROCdc:ENDPROC
+IF I%>16 THEN ENDPROC
+MN%=MN%-1
+IF ST%=3 THEN DEAD%=1 ELSE SOUND 0,3,6,20
 ENDPROC
 DEF PROCsink(B%)
 LOCAL E%,C%,T%
@@ -174,13 +189,12 @@ IF E%=0 THEN ENDPROC
 C%=tab%+E%*16
 T%=B%?5+10
 IF T%>61 THEN T%=61
-C%?1=B%?1
-C%?2=B%?2:C%?3=B%?3
-C%?4=B%?4:C%?5=B%?5
-C%?6=B%?6:C%?7=B%?7
-C%?8=38:C%?9=0
-C%?10=255:C%?11=255
-C%?12=6:C%?13=62:C%?14=0:C%?15=T%
+REM copy sprite, x, y, vx from the sunk sub (its status byte is already 0)
+C%!0=B%!0
+C%!4=B%!4
+REM vy=38 sinks it; last-drawn &FFFF = never (the collision pass erased it)
+C%!8=38+&FFFF0000
+C%!12=6+62*256+T%*&1000000
 C%?0=1
 ENDPROC
 DEF PROCscore
@@ -209,23 +223,23 @@ NEXT
 ?evt%=0
 PROCscreen
 PROCfloor
-SX%=30*256
 PROCspawn(0,0,30,9,0,0,6,57,0,74)
 PROChud
 PRINT TAB(4,24);CHR$(134);"Z/X STEER  SPACE DROP  Q QUITS";
 ENDPROC
 DEF PROCspawn(N%,SP%,X%,Y%,VX%,VY%,M0%,M1%,M2%,M3%)
-LOCAL B%,V%
+REM 4-byte pokes keep this cheap: a spawn happens inside the frame budget
+LOCAL B%
 B%=tab%+N%*16
+REM +2/+3 x lo/hi, +4/+5 y lo/hi (lo bytes 0)
+B%!2=X%*256+Y%*&1000000
+REM +6 vx, +8 vy: signed 16-bit words (AND masks vx to its low word)
+B%!6=(VX% AND &FFFF)+VY%*65536
+REM +10/+11 last drawn = never (+12/+13 overwritten just below)
+B%!10=&FFFF
+REM +12..+15 bounds box xmin,xmax,ymin,ymax
+B%!12=M0%+M1%*256+M2%*65536+M3%*&1000000
 B%?1=SP%
-B%?2=0:B%?3=X%
-B%?4=0:B%?5=Y%
-V%=VX%:IF V%<0 THEN V%=V%+65536
-B%?6=V% AND 255:B%?7=V% DIV 256
-V%=VY%:IF V%<0 THEN V%=V%+65536
-B%?8=V% AND 255:B%?9=V% DIV 256
-B%?10=255:B%?11=255
-B%?12=M0%:B%?13=M1%:B%?14=M2%:B%?15=M3%
 B%?0=1
 ENDPROC
 DEF PROCscreen

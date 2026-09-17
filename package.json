@@ -1,0 +1,8 @@
+{
+  "name": "depth-charge-mode7",
+  "private": true,
+  "description": "Headless jsbeeb harness for the Mode 7 Depth Charge port (see test/)",
+  "devDependencies": {
+    "jsbeeb-mcp": "^3.4.0"
+  }
+}

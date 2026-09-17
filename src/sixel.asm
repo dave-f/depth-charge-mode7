@@ -16,12 +16,33 @@
 \       no blank interim state, so far less tearing than erase+draw; pad
 \       art keeps it self-erasing for 1-sixel moves)
 \   +18 object walker: one call integrates and redraws every active slot
+\   +21 frame: the whole per-frame job for the game loop - waits until
+\       two vsync events have passed (25Hz lock with a full 40ms budget;
+\       two OSBYTE 19s would slip to 3 fields whenever BASIC's work ran
+\       past one), flushes the keyboard buffer, scans Z/X/SPACE/Q,
+\       steers the ship (slot 0 x +-0.75 sixel, clamped 6..57), then falls
+\       into the walker. Reports to BASIC through frmflg (see below).
 \ No clipping: sprites must lie fully on screen.
+\
+\ Frame bytes after the jump table (BASIC peeks/pokes these):
+\   objevt  count of expiries/hits since BASIC last cleared it; their
+\           slot numbers are in evq (after the object table, NSLOTS bytes)
+\   frmflg  set fresh by frame: bit 0 SPACE just pressed (rising edge),
+\           bit 1 Q held, bit 2 slow tick (every 4th frame - for the
+\           mine-launch roll, so BASIC needn't run it every frame)
+\   frmprv  last frame's key mask (BASIC pokes 1 at game start so the
+\           SPACE that started the game doesn't also drop a charge)
+\   frmcnt  frame counter          frmkey  this frame's key mask
+\   vsync   vsync events since the last frame (bumped by evhandler)
+\   evaddr  EQUW evhandler: BASIC copies it to EVNTV (&220) and enables
+\           the vsync event with *FX14,4 (and *FX13,4 on the way out)
+\   Key mask bits: 0 SPACE, 1 Z, 2 X, 3 Q.
 \
 \ Object table (20 slots of 16 bytes at objtab; poke from BASIC):
 \   +0 status: 0 free, 1 active, 2 expired, 3 hit (walker sets 2/3 after
-\      erasing the sprite; BASIC handles then clears). Walker INCs objevt
-\      each time, so BASIC needs just one PEEK per frame to notice.
+\      erasing the sprite; BASIC handles then clears). Each time, the slot
+\      number is queued in evq[objevt] and objevt bumped, so BASIC PEEKs
+\      one byte per frame and then visits only the slots that changed.
 \   +1 sprite id           +2/+3  x lo/hi (8.8 fixed, hi = sixel)
 \   +4/+5 y lo/hi          +6/+7  vx lo/hi (signed 8.8, <1 sixel/frame)
 \   +8/+9 vy lo/hi         +10/+11 last drawn sixel x/y (255 = never)
@@ -70,6 +91,8 @@ zpboxb = &88        \ &88-&8B: box B x1,x2,y1,y2
 zpgb   = &8C        \ &8C/&8D: loadbox/eraseslot slot pointer
 zpoth  = &8E        \ &8E/&8F: collision inner-loop slot pointer
 
+osbyte   = &FFF4
+
 NSLOTS   = 20
 SLOTSIZE = 16
 SUB0     = 1        \ slot ranges double as collision types
@@ -87,15 +110,33 @@ NMINES   = 8
     JMP sprerase
     JMP sprmove
     JMP objwalk
+    JMP frame
 
 .objevt
     EQUB 0          \ count of expiries since BASIC last cleared it
-    EQUB 0, 0       \ pad so objtab lands on a round address
+.frmflg
+    EQUB 0
+.frmprv
+    EQUB 0
+.frmcnt
+    EQUB 0
+.frmkey
+    EQUB 0
+.vsync
+    EQUB 0
+.evaddr
+    EQUW evhandler
 .objtab
     SKIP NSLOTS * SLOTSIZE
+.evq
+    SKIP NSLOTS         \ slot numbers of this frame's expiries/hits
 
-ASSERT objevt = &7515
-ASSERT objtab = &7518
+ASSERT objevt = &7418
+ASSERT frmflg = &7419
+ASSERT frmprv = &741A
+ASSERT evaddr = &741E
+ASSERT objtab = &7420
+ASSERT evq    = &7560
 
 .initrow                \ colour code(s) at the left, blank graphics after
     LDY zpy
@@ -371,7 +412,11 @@ ASSERT objtab = &7518
     LDY #0
     LDA #2
     STA (zpslot),Y
-    INC objevt
+    LDA zpslot          \ queue it for BASIC
+    STA zpgb
+    LDA zpslot+1
+    STA zpgb+1
+    JSR pushslot
 .ownext
     CLC
     LDA zpslot
@@ -440,7 +485,12 @@ ASSERT objtab = &7518
     LDY #0
     LDA #3
     STA (zpoth),Y
-    INC objevt
+    JSR pushslot        \ (zpgb) is the sub; then the charge
+    LDA zpslot
+    STA zpgb
+    LDA zpslot+1
+    STA zpgb+1
+    JSR pushslot
     JMP chgnext
 .subnext
     CLC
@@ -504,7 +554,7 @@ ASSERT objtab = &7518
     LDY #0
     LDA #3
     STA (zpslot),Y
-    INC objevt
+    JSR pushslot
 .minnext
     CLC
     LDA zpslot
@@ -517,6 +567,32 @@ ASSERT objtab = &7518
     BEQ coldone
     JMP minloop
 .coldone
+    RTS
+
+.pushslot               \ evq[objevt++] = slot number of (zpgb); full = drop
+    LDX objevt
+    CPX #NSLOTS
+    BCS pushfull
+    SEC
+    LDA zpgb
+    SBC #LO(objtab)
+    TAY                 \ Y = low byte of the offset
+    LDA zpgb+1
+    SBC #HI(objtab)     \ A = high byte (0 or 1)
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    STA evq,X
+    TYA
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    ORA evq,X           \ offset / 16
+    STA evq,X
+    INC objevt
+.pushfull
     RTS
 
 .loadbox                \ (zpgb) = slot; X = 0 -> box A, 4 -> box B
@@ -596,6 +672,104 @@ ASSERT objtab = &7518
     LDA #&FF
     JMP sprgo
 .erdone
+    RTS
+
+\ --- frame: sync, input, steer, then walk ---------------------------------
+
+.frame
+    LDA vsync           \ 25Hz lock: wait for the 2nd vsync since last frame
+    CMP #2
+    BCC frame
+    LDA #0              \ (not -2: a frame that overran just resyncs)
+    STA vsync
+    LDA #15             \ flush the keyboard buffer so held keys don't
+    LDX #1              \ type into BASIC when the game exits
+    JSR osbyte
+    LDA #0
+    STA frmkey
+    LDX #&EF            \ Q      (INKEY -17)   scanned high bit first:
+    JSR keytest         \ each ROL shifts the earlier keys up one
+    ROL frmkey
+    LDX #&BD            \ X      (INKEY -67)
+    JSR keytest
+    ROL frmkey
+    LDX #&9E            \ Z      (INKEY -98)
+    JSR keytest
+    ROL frmkey
+    LDX #&9D            \ SPACE  (INKEY -99)
+    JSR keytest
+    ROL frmkey
+    LDA frmkey          \ Z: ship x -= 0.75 sixel (8.8), clamp at 6
+    AND #2
+    BEQ frnoleft
+    SEC
+    LDA objtab+2
+    SBC #&C0
+    STA objtab+2
+    LDA objtab+3
+    SBC #0
+    STA objtab+3
+    CMP #6
+    BCS frnoleft
+    LDA #6
+    STA objtab+3
+    LDA #0
+    STA objtab+2
+.frnoleft
+    LDA frmkey          \ X: ship x += 0.75 sixel, clamp at 57
+    AND #4
+    BEQ frnoright
+    CLC
+    LDA objtab+2
+    ADC #&C0
+    STA objtab+2
+    LDA objtab+3
+    ADC #0
+    STA objtab+3
+    CMP #58
+    BCC frnoright
+    LDA #57
+    STA objtab+3
+    LDA #0
+    STA objtab+2
+.frnoright
+    LDA frmprv          \ flags bit 0: SPACE rising edge
+    EOR #&FF
+    AND frmkey
+    AND #1
+    STA frmflg
+    LDA frmkey
+    STA frmprv
+    AND #8              \ flags bit 1: Q held
+    BEQ frnoquit
+    LDA frmflg
+    ORA #2
+    STA frmflg
+.frnoquit
+    INC frmcnt          \ flags bit 2: every 4th frame
+    LDA frmcnt
+    AND #3
+    BNE frnoslow
+    LDA frmflg
+    ORA #4
+    STA frmflg
+.frnoslow
+    JMP objwalk
+
+.evhandler              \ EVNTV: A = event number; 4 = vsync
+    PHA
+    CMP #4
+    BNE evdone
+    INC vsync
+.evdone
+    PLA
+    RTS
+
+.keytest                \ X = negative INKEY number -> carry set if held
+    LDA #129
+    LDY #&FF
+    JSR osbyte
+    CPX #&FF
     RTS
 
 \ --- tables ---------------------------------------------------------------

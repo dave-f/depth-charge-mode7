@@ -14,6 +14,14 @@
   porthole rows distinguish the three score types.
 - Engine: object table + walker in MC (see src/sixel.asm header), BASIC
   is director only. Mock scene runs ~35Hz.
+- **2026-09-17: 25Hz for real.** Measured in jsbeeb (`test/probe.mjs --rate`),
+  the BASIC loop was taking 3-4 fields a frame (12-17Hz): BASIC alone cost
+  ~40ms, and two `OSBYTE 19`s slip to 3 fields as soon as the work exceeds
+  one. Fix: a machine-code `frame` entry does the vsync wait (EVNTV counter,
+  full 40ms budget), key scan, steering and fire edge-detect, then walks;
+  the walker queues expired/hit slot numbers so BASIC handles only those;
+  `PROCspawn` uses 4-byte pokes. BASIC's loop is 6 statements. Result:
+  50 frames per 100 fields, Model B and Master. Code moved to &7400.
 
 Ported from the PICO-8 original (128×128, 30fps). Reference implementation:
 `C:\Dev\depth-charge\depth.p8` (v1.1 — includes the mine-launch fix; left- and
@@ -51,7 +59,8 @@ Mode 7: 40×25 chars = 80×75 sixels (2×3 per cell). Screen memory at &7C00, 1K
 
 ## Movement & timing
 
-- 50Hz frame loop, sync via OSBYTE 19 (*FX 19).
+- 25Hz frame loop (two fields), locked by counting vsync events; see the
+  2026-09-17 decision above. (Original plan: 50Hz via OSBYTE 19.)
 - Keep fractional x positions internally (original sub speeds are 0.05–0.3 px/frame
   effective); round to sixels only at draw time to avoid stutter between speed tiers.
 - PICO-8 `time%n` modulo counters map directly to a frame counter.
