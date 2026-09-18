@@ -14,7 +14,7 @@
 //
 // Key script: --script "SPACE:2,.:50,Z:40,X:40,SPACE:2,.:200"
 //   KEY:FRAMES holds KEY for that many fields then releases it; '.' idles.
-//   Keys: SPACE Z X Q SHIFT LEFT RIGHT, or any single letter/digit.
+//   Keys: SPACE Z X Q ESC SHIFT LEFT RIGHT, or any single letter/digit.
 //
 //   node test/probe.mjs --txt --png shot.png
 //   node test/probe.mjs --script "SPACE:2,.:100" --rate 100 --txt
@@ -38,7 +38,7 @@ const script = opt("--script", "");
 const rateFields = Number(opt("--rate", 0));
 const png = opt("--png", "");
 
-const KEYS = { SPACE: 32, SHIFT: 16, RETURN: 13, Z: 90, X: 88, Q: 81, LEFT: 37, RIGHT: 39 };
+const KEYS = { SPACE: 32, SHIFT: 16, RETURN: 13, Z: 90, X: 88, Q: 81, ESC: 27, LEFT: 37, RIGHT: 39 };
 const keyCode = (k) => KEYS[k.toUpperCase()] ?? k.toUpperCase().charCodeAt(0);
 
 const FIELD_CYCLES = 39936;

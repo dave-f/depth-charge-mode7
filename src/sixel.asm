@@ -20,7 +20,7 @@
 \       two vsync events have passed (25Hz lock with a full 40ms budget;
 \       two OSBYTE 19s would slip to 3 fields whenever BASIC's work ran
 \       past one), flushes the keyboard buffer, scans the cursor keys,
-\       Z, X and Q, steers the ship (slot 0 x +-0.75 sixel, clamped
+\       Z, X and ESCAPE, steers the ship (slot 0 x +-0.75 sixel, clamped
 \       6..57), lobs a charge off the port side on a Z press and the
 \       starboard side on X (max 3 wet; airborne ones fall diagonally at
 \       0.375 down / 0.5 out a frame until they reach the water row, then
@@ -53,10 +53,10 @@
 \           (sound), 6 a mine hit the ship (death). Charges, sub expiry,
 \           respawns and wreck effects never reach BASIC.
 \   frmflg  set fresh by frame: bit 0 a charge was dropped (sound), bit 1
-\           Q held, bit 2 the clock has run out
+\           ESCAPE held, bit 2 the clock has run out
 \   frmprv  last frame's key mask (BASIC zeroes it at game start)
 \   frmkey  this frame's key mask (bits: 0 Z fire left, 1 cursor left,
-\           2 cursor right, 3 Q, 4 X fire right)
+\           2 cursor right, 3 ESCAPE, 4 X fire right)
 \   vsync   vsync events since the last frame (bumped by evhandler)
 \   nchg    charges in the water (0-3); BASIC shows 3-nchg on the HUD
 \   evaddr  EQUW evhandler: BASIC copies it to EVNTV (&220) and enables
@@ -1066,7 +1066,7 @@ ASSERT plife  = &6F84
     LDX #&BD            \ X      (INKEY -67)   scanned high bit first:
     JSR keytest         \ each ROL shifts the earlier keys up one
     ROL frmkey
-    LDX #&EF            \ Q      (INKEY -17)
+    LDX #&8F            \ ESCAPE (INKEY -113; *FX200 makes it a plain key)
     JSR keytest
     ROL frmkey
     LDX #&86            \ cursor right (INKEY -122)
@@ -1139,7 +1139,7 @@ ASSERT plife  = &6F84
 .frnofire
     LDA frmkey
     STA frmprv
-    AND #8              \ flags bit 1: Q held
+    AND #8              \ flags bit 1: ESCAPE held
     BEQ frnoquit
     LDA frmflg
     ORA #2

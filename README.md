@@ -44,7 +44,7 @@ misses splashes at the surface. Design decisions and layout maths live in
 | `←` / `→` | steer ship left / right |
 | `Z` / `X` | lob a depth charge off the left / right side (max 3 wet) |
 | `SPACE` | start a game from the title |
-| `Q` | quit to BASIC |
+| `ESCAPE` | quit to BASIC |
 
 ## How it works
 
