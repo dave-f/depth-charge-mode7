@@ -7,7 +7,7 @@ The original is a PICO-8 take on the old arcade classic, also playable on the
 [Lexaloffle BBS](https://www.lexaloffle.com/bbs/?tid=4045) (`load #depthcharge` in PICO-8).
 
 <p align="center">
-  <img src="screenshots/play.png" alt="In play: three charges dropping, a sunk sub sinking through the lanes, mines rising" width="49%">
+  <img src="screenshots/play.png" alt="In play: a charge lobbed off the starboard side, two more tumbling as they sink, a sunk sub sinking through the lanes under the puff from the hit, a mine rising" width="49%">
   <img src="screenshots/title.png" alt="Title screen" width="49%">
 </p>
 
