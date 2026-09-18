@@ -19,9 +19,12 @@
 \   +21 frame: the whole per-frame job for the game loop - waits until
 \       two vsync events have passed (25Hz lock with a full 40ms budget;
 \       two OSBYTE 19s would slip to 3 fields whenever BASIC's work ran
-\       past one), flushes the keyboard buffer, scans Z/X/SPACE/Q,
-\       steers the ship (slot 0 x +-0.75 sixel, clamped 6..57), drops a
-\       charge on a SPACE press (max 3 wet), rolls each sub's 1%/frame
+\       past one), flushes the keyboard buffer, scans the cursor keys,
+\       Z, X and Q, steers the ship (slot 0 x +-0.75 sixel, clamped
+\       6..57), lobs a charge off the port side on a Z press and the
+\       starboard side on X (max 3 wet; airborne ones fall diagonally at
+\       0.375 down / 0.5 out a frame until they reach the water row, then
+\       sink straight down - the original's two fire buttons), rolls each sub's 1%/frame
 \       mine launch, runs the game clock (secs counts down once every 25
 \       frames), then falls into the walker. It keeps the HUD's TIME and
 \       DC fields up to date itself (via hudnum) and reports the rest to
@@ -51,9 +54,9 @@
 \           respawns and wreck effects never reach BASIC.
 \   frmflg  set fresh by frame: bit 0 a charge was dropped (sound), bit 1
 \           Q held, bit 2 the clock has run out
-\   frmprv  last frame's key mask (BASIC pokes 1 at game start so the
-\           SPACE that started the game doesn't also drop a charge)
-\   frmkey  this frame's key mask (bits: 0 SPACE, 1 Z, 2 X, 3 Q)
+\   frmprv  last frame's key mask (BASIC zeroes it at game start)
+\   frmkey  this frame's key mask (bits: 0 Z fire left, 1 cursor left,
+\           2 cursor right, 3 Q, 4 X fire right)
 \   vsync   vsync events since the last frame (bumped by evhandler)
 \   nchg    charges in the water (0-3); BASIC shows 3-nchg on the HUD
 \   evaddr  EQUW evhandler: BASIC copies it to EVNTV (&220) and enables
@@ -947,8 +950,9 @@ ASSERT plife  = &7184
     RTS
 
 .tpls
-    EQUB 0,0, 38,0, &FF,&FF, 6,77,15,64     \ charge: sinks at 38/256 (the
-                                            \  original's 19 felt slow here)
+    EQUB 0,0, 96,0, &FF,&FF, 6,76,8,64      \ charge: airborne, falls at
+                                            \  96/256 (vx set by dropchg;
+                                            \  frsplash switches to 0/38)
     EQUB 0,0, &DA,&FF, &FF,&FF, 6,77,13,74  \ mine: rises at -38/256; ymin 13
                                             \  so its ink reaches the hull
     EQUB 0,0, 0,0, &FF,&FF, 6,62,0,74       \ sub (vx set by respawn)
@@ -1047,19 +1051,22 @@ ASSERT plife  = &7184
     JSR osbyte
     LDA #0
     STA frmkey
-    LDX #&EF            \ Q      (INKEY -17)   scanned high bit first:
+    LDX #&BD            \ X      (INKEY -67)   scanned high bit first:
     JSR keytest         \ each ROL shifts the earlier keys up one
     ROL frmkey
-    LDX #&BD            \ X      (INKEY -67)
+    LDX #&EF            \ Q      (INKEY -17)
+    JSR keytest
+    ROL frmkey
+    LDX #&86            \ cursor right (INKEY -122)
+    JSR keytest
+    ROL frmkey
+    LDX #&E6            \ cursor left  (INKEY -26)
     JSR keytest
     ROL frmkey
     LDX #&9E            \ Z      (INKEY -98)
     JSR keytest
     ROL frmkey
-    LDX #&9D            \ SPACE  (INKEY -99)
-    JSR keytest
-    ROL frmkey
-    LDA frmkey          \ Z: ship x -= 0.75 sixel (8.8), clamp at 6
+    LDA frmkey          \ left: ship x -= 0.75 sixel (8.8), clamp at 6
     AND #2
     BEQ frnoleft
     SEC
@@ -1076,7 +1083,7 @@ ASSERT plife  = &7184
     LDA #0
     STA objtab+2
 .frnoleft
-    LDA frmkey          \ X: ship x += 0.75 sixel, clamp at 57
+    LDA frmkey          \ right: ship x += 0.75 sixel, clamp at 57
     AND #4
     BEQ frnoright
     CLC
@@ -1095,14 +1102,27 @@ ASSERT plife  = &7184
 .frnoright
     LDA #0
     STA frmflg
-    LDA frmprv          \ SPACE rising edge -> drop a charge
-    EOR #&FF
+    LDA frmprv          \ rising edges: Z lobs a charge to port, X to
+    EOR #&FF            \  starboard (both in one frame: two charges)
     AND frmkey
+    STA zpcnt           \ (zpw/zpwm belong to hudnum, which showdc calls)
     AND #1
-    BEQ frnofire
+    BEQ frnoleft2
+    LDA #0
+    STA zpwm
     JSR dropchg
-    BCC frnofire        \ three already wet: nothing dropped
+    BCC frnoleft2       \ three already wet: nothing dropped
     LDA #1              \ flags bit 0: a charge was dropped
+    STA frmflg
+.frnoleft2
+    LDA zpcnt
+    AND #16
+    BEQ frnofire
+    LDA #1
+    STA zpwm
+    JSR dropchg
+    BCC frnofire
+    LDA #1
     STA frmflg
 .frnofire
     LDA frmkey
@@ -1149,9 +1169,41 @@ ASSERT plife  = &7184
     INX
     CPX #SUB0+NSUBS
     BNE frmine
+    LDX #CHG0           \ airborne charges (vx set) that have reached the
+.frsplash               \ water row: stop drifting, sink slowly
+    JSR slotptr
+    LDY #0
+    LDA (zpgb),Y
+    CMP #1
+    BNE frsplnext
+    LDY #6
+    LDA (zpgb),Y        \ vx lo 0: already sinking
+    BEQ frsplnext
+    LDY #5
+    LDA (zpgb),Y        \ y < 14: ink still above the waterline
+    CMP #14
+    BCC frsplnext
+    LDA #0
+    LDY #6
+    STA (zpgb),Y
+    INY
+    STA (zpgb),Y
+    LDY #8
+    LDA #38             \ vy = 38/256 (the original's 19 felt slow here)
+    STA (zpgb),Y
+.frsplnext
+    INX
+    CPX #CHG0+NCHGUSE
+    BNE frsplash
     JMP objwalk
 
-.dropchg                \ SPACE: a charge under the ship; C set if dropped
+.dropchg                \ zpwm = 0: lob a charge off the port side, 1: off
+                        \ the starboard side; C set if dropped. Starts at
+                        \ deck height beside the hull, falling 0.375 down
+                        \ and 0.5 outward a frame until frsplash lands it.
+                        \ From the screen edge it lands outside the box
+                        \ and is simply lost, as the original's went off
+                        \ screen.
     LDA nchg
     CMP #NCHGUSE
     BCS dropno
@@ -1160,7 +1212,7 @@ ASSERT plife  = &7184
     JSR findfree
     BCC dropno
     LDX #TPL_CHG
-    JSR copytpl         \ sinks at 38/256, box 6..77 x 15..64
+    JSR copytpl         \ vy 96/256, box 6..76 x 8..64
     LDY #1
     LDA #4              \ charge sprite
     STA (zpgb),Y
@@ -1169,13 +1221,32 @@ ASSERT plife  = &7184
     STA (zpgb),Y
     LDY #4
     STA (zpgb),Y
-    LDY #3
-    LDA objtab+3        \ x = ship x + 10
-    CLC
-    ADC #10
-    STA (zpgb),Y
     LDY #5
-    LDA #16             \ y = 16: just under the hull
+    LDA #10             \ y = 10: ink rows 11-14 level with the hull
+    STA (zpgb),Y
+    LDA zpwm            \ (read before showdc's hudnum reuses it)
+    BNE dropright
+    LDA objtab+3        \ port: x = ship x - 4 (ink 2 clear of the bow),
+    SEC                 \  vx = -128/256
+    SBC #4
+    LDY #3
+    STA (zpgb),Y
+    LDY #7
+    LDA #&FF
+    STA (zpgb),Y
+    BNE dropgo
+.dropright
+    LDA objtab+3        \ starboard: x = ship x + 22, vx = +128/256
+    CLC
+    ADC #22
+    LDY #3
+    STA (zpgb),Y
+    LDY #7
+    LDA #0
+    STA (zpgb),Y
+.dropgo
+    LDY #6
+    LDA #&80
     STA (zpgb),Y
     LDY #0
     LDA #1
@@ -1442,7 +1513,7 @@ NEXT
     EQUW sprsub0        \ 1: sub type 0 (20 pts), pad cols each side
     EQUW sprsub1        \ 2: sub type 1 (50 pts)
     EQUW sprsub2        \ 3: sub type 2 (80 pts)
-    EQUW sprcharge      \ 4: depth charge, pad rows above/below
+    EQUW sprcharge      \ 4: depth charge, pad all round (it flies diagonally)
     EQUW sprmine        \ 5: mine, pad rows above/below
 
 .sprship
@@ -1494,14 +1565,14 @@ NEXT
     EQUB %00111111, %11111110, %00000000   \ ..#############..
 
 .sprcharge
-    EQUB 2, 6
-    EQUB 0, 1, 2, 4     \ ink box
-    EQUB %00000000                         \ ..
-    EQUB %11000000                         \ ##
-    EQUB %11000000                         \ ##
-    EQUB %11000000                         \ ##
-    EQUB %11000000                         \ ##
-    EQUB %00000000                         \ ..
+    EQUB 4, 6
+    EQUB 1, 1, 2, 4     \ ink box
+    EQUB %00000000                         \ ....
+    EQUB %01100000                         \ .##.
+    EQUB %01100000                         \ .##.
+    EQUB %01100000                         \ .##.
+    EQUB %01100000                         \ .##.
+    EQUB %00000000                         \ ....
 
 .sprmine
     EQUB 3, 5

@@ -43,6 +43,17 @@
   sky). The wreck now takes over the sub's drawn sprite instead of erasing
   and redrawing it a frame later. PLOT moved to &7000 (HIMEM=&7000) for the
   room; ~160 bytes spare. Frame rate unchanged (748/749 gaps at 2 fields).
+- **2026-09-18: two-sided firing, as the original.** Reverses the "drops
+  straight down" call. Cursor keys steer; Z lobs a charge off the port side
+  (x = ship x - 4), X off the starboard side (x = ship x + 22), both from
+  deck height (y = 10, ink level with the hull). In the air the charge
+  falls 0.375 and drifts 0.5 sixel a frame (the original's 0.5 px each at
+  30fps, scaled); `frsplash` in the frame entry zeroes vx and sets the 38/256
+  sink once y reaches 14, so it lands ~6 sixels out. The charge sprite grew
+  pad columns (4 wide) so the diagonal opaque move self-erases. From the
+  screen edge an outward lob leaves the bounds box at once and is lost,
+  as the original's went off screen. `*FX4,1` keeps the cursor keys out of
+  the editor. ~44 bytes spare under the screen after this.
 
 Ported from the PICO-8 original (128×128, 30fps). Reference implementation:
 `C:\Dev\depth-charge\depth.p8` (v1.1 — includes the mine-launch fix; left- and
@@ -100,7 +111,7 @@ Mode 7: 40×25 chars = 80×75 sixels (2×3 per cell). Screen memory at &7C00, 1K
 ## Gameplay parity checklist (from depth.p8 v1.1)
 
 *Superseded where it conflicts with the locked decisions above: the port fields
-3 subs / 3 charges / 4 mines, charges drop straight down, and the title plays a
+3 subs / 3 charges / 4 mines, and the title plays a
 sonar ping in place of the reset jingle. Kept as the record of the original.*
 
 - 60s timer, +10s per sub sunk; scores 20/50/80 by sub type

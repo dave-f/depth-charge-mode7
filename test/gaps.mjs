@@ -6,11 +6,11 @@
 //     in ms, grouped by what that frame had to do: the frame flags MC wrote
 //     (1 fire, 2 quit, 4 slow tick) and how many events the walker queued
 //   node test/gaps.mjs [B-DFS1.2|Master] [fields=500] [dropEvery=0]
-//   dropEvery: tap SPACE every that many fields, so kills land in the window
+//   dropEvery: tap Z/X (alternating) every that many fields, so kills land in the window
 import { MachineSession } from "../node_modules/jsbeeb/src/machine-session.js";
 const model = process.argv[2] || "B-DFS1.2";
 const fields = Number(process.argv[3] || 500);
-const dropEvery = Number(process.argv[4] || 0);   // fields between SPACE taps (0 = idle ship)
+const dropEvery = Number(process.argv[4] || 0);   // fields between fire taps (0 = idle ship)
 const s = new MachineSession(model, { tube: false });
 await s.initialise(); await s.boot(30);
 s.loadDisc("build/depthcharge.ssd");
@@ -23,7 +23,7 @@ const FRAME_ENTRY = 0x7015;            // JMP frame in the jump table
 const [op, lo, hi] = s.readMemory(0x7012, 3);
 const walk = lo | (hi << 8);
 const cpu = s._machine.processor;
-let flg = 0, cur = null;
+let flg = 0, cur = null, drops = 0;
 const frames = [];                      // {start, gap, flg, evt, work}
 const h1 = cpu.debugInstruction.add((pc) => {
     if (pc === walk) {
@@ -41,9 +41,9 @@ const h2 = cpu.debugWrite.add((addr, val) => {
     return false;
 });
 if (dropEvery > 0) {
-    // tap SPACE every dropEvery fields so charges (and kills) happen in the window
+    // tap Z and X alternately every dropEvery fields so charges (and kills) happen
     for (let done = 0; done < fields; done += dropEvery) {
-        s.keyDown(32); await s.runFor(F * 4); s.keyUp(32);
+        const fireKey = (drops++ & 1) ? 88 : 90; s.keyDown(fireKey); await s.runFor(F * 4); s.keyUp(fireKey);
         await s.runFor(F * Math.max(1, Math.min(dropEvery, fields - done) - 4));
     }
 } else {

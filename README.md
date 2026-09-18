@@ -27,7 +27,9 @@ Playable. Steer the ship, depth-charge the subs, dodge the mines they float up
 at you; 60 seconds on the clock, +10 per kill, 20/50/80 points by sub type,
 session high score. Compared to the original it fields 3 subs / 3 charges /
 4 mines (the Beeb's 75 sixels of water want a less crowded ocean than 128px did)
-and drops straight down rather than lobbing left/right.
+but keeps the original's two fire keys: a charge is lobbed off the left or
+right side of the ship, falls diagonally through the air and sinks straight
+down once it hits the water.
 
 Sound is in: four `ENVELOPE`s (sonar ping on the title, charge drop, explosion,
 death), with a standalone audition menu on the disc (`CHAIN"SND"`). The original's
@@ -39,8 +41,9 @@ misses splashes at the surface. Design decisions and layout maths live in
 
 | Key | Action |
 |---|---|
-| `Z` / `X` | steer ship left / right |
-| `SPACE` | drop a depth charge (max 3 wet) |
+| `←` / `→` | steer ship left / right |
+| `Z` / `X` | lob a depth charge off the left / right side (max 3 wet) |
+| `SPACE` | start a game from the title |
 | `Q` | quit to BASIC |
 
 ## How it works
@@ -51,7 +54,7 @@ misses splashes at the surface. Design decisions and layout maths live in
   of fixed-point positions/velocities integrated, bounds-checked,
   collision-tested (ink-box overlap) and redrawn-on-move. One `frame` entry
   per game frame does the lot: locks to 25Hz by counting vsync events (EVNTV),
-  scans the keys, steers, drops charges, rolls each sub's mine launch (16-bit
+  scans the keys, steers, lobs charges, rolls each sub's mine launch (16-bit
   LFSR), runs the clock, then walks and collides. Subs respawn themselves, a
   sunk sub leaves a sinking wreck and a puff of particles (single sixels that
   share cells with the sprites without ever clearing a sprite's bit), and the
@@ -69,7 +72,7 @@ misses splashes at the surface. Design decisions and layout maths live in
 - **Test harness** (`test/probe.mjs`, Node): boots the disc headlessly in
   jsbeeb, plays a key script, dumps the Mode 7 screen as text, screenshots,
   and counts walker calls per field. `npm install` once, then e.g.
-  `node test/probe.mjs --script "SPACE:3,.:100" --rate 100 --txt`. Alongside
+  `node test/probe.mjs --script "SPACE:3,.:60,Z:4,.:100" --rate 100 --txt`. Alongside
   it: `gaps.mjs` (BASIC work per frame type), `profile.mjs` (a BBC BASIC line
   profiler, sampling the interpreter's statement pointer), `bench.mjs`
   (statement costs) and `serve.mjs` (serve the disc to the public jsbeeb).

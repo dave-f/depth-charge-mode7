@@ -51,7 +51,7 @@ const cost = new Float64Array(lines.length);
 const mosCost = new Float64Array(lines.length);   // of which: CPU in the MOS (&C000+): OS calls + interrupts
 const visits = new Uint32Array(lines.length);
 let mc = 0, other = 0, last = s.elapsedCycles, lastLine = -2;
-let curEvt = 0, framesCounted = 0, frameOn = onlyEvt === 0;
+let curEvt = 0, framesCounted = 0, frameOn = onlyEvt === 0, drops = 0;
 const [, wlo, whi] = s.readMemory(0x7012, 3);
 const walk = wlo | (whi << 8);
 const cpu = s._machine.processor;
@@ -73,7 +73,7 @@ const hook = cpu.debugInstruction.add((pc) => {
 });
 if (dropEvery > 0) {
     for (let done = 0; done < fields; done += dropEvery) {
-        s.keyDown(32); await s.runFor(F * 4); s.keyUp(32);
+        const fireKey = (drops++ & 1) ? 88 : 90; s.keyDown(fireKey); await s.runFor(F * 4); s.keyUp(fireKey);
         await s.runFor(F * Math.max(1, Math.min(dropEvery, fields - done) - 4));
     }
 } else {

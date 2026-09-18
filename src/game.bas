@@ -1,5 +1,5 @@
 REM Depth Charge (Mode 7) - port of the PICO-8 original
-REM Z/X steer, SPACE drops a charge (max 3), Q quits
+REM Cursor keys steer, Z/X lob a charge off the left/right side (max 3), Q quits
 REM Speeds are original px/frame@30 converted to sixels/frame@25Hz (x0.75)
 REM The game rules run in the PLOT machine code (sixel.asm): frame% locks
 REM to 25Hz, reads the keys, steers, drops charges, launches mines,
@@ -11,6 +11,7 @@ REM parameters, no REMs inside PROC bodies (they cost ~0.5ms a visit),
 REM and no PRINT with STR$ (hud% writes numbers into screen memory).
 MODE 7
 *FX200,3
+*FX4,1
 HIMEM=&7000
 *LOAD PLOT
 VDU 23;8202;0;0;0;
@@ -38,6 +39,7 @@ IF QT%=0 THEN PROCgame
 UNTIL QT%
 *FX13,4
 *FX15,1
+*FX4,0
 *FX200,0
 MODE 7
 END
@@ -66,7 +68,7 @@ IF INKEY(-17) THEN QT%=1
 ENDPROC
 REM A game: 60 seconds on the clock, +10 per kill. The loop is four
 REM statements; frame% does the rest and raises flags/events to act on.
-REM ?prv%=1: SPACE is still down from the title, so mark it held.
+REM ?prv%=0: no fire key was held last frame.
 DEF PROCgame
 PROCwipe
 SC%=0:DEAD%=0:?secs%=60:?tick%=25
@@ -75,7 +77,7 @@ PROChud
 FOR I%=1 TO 3
 ?&70=I%:CALL sub%
 NEXT
-?prv%=1
+?prv%=0
 REPEAT
 CALL frame%
 IF ?flg% THEN PROCflags
@@ -154,7 +156,7 @@ PROCscreen
 PROCfloor
 tab%!0=&1E000000:tab%!4=&900:tab%!8=&FFFF0000:tab%!12=&4A003906:tab%?0=1
 PROChud
-PRINT TAB(4,24);CHR$(134);"Z/X STEER  SPACE DROP  Q QUITS";
+PRINT TAB(4,24);CHR$(134);"[ ] STEER  Z/X FIRE  Q QUITS";
 ENDPROC
 REM sky rows 2-4: white on cyan; water rows 5-22: lane colours on blue
 DEF PROCscreen
