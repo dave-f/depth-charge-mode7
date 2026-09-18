@@ -44,7 +44,7 @@ const keyCode = (k) => KEYS[k.toUpperCase()] ?? k.toUpperCase().charCodeAt(0);
 const FIELD_CYCLES = 39936;
 // Frames are stamped at the walker proper, not at the BASIC CALL: the frame
 // entry spins on the vsync counter first, so the walker's start is the
-// vsync-locked instant the player sees. walk% (&7112) is JMP objwalk, so
+// vsync-locked instant the player sees. walk% (&7012) is JMP objwalk, so
 // the walker's address is read from that JMP's operand once the disc is up.
 let walkAddr = 0;
 
@@ -75,8 +75,8 @@ for (const step of script.split(",").map((x) => x.trim()).filter(Boolean)) {
 }
 
 if (rateFields > 0) {
-    const [op, lo, hi] = s.readMemory(0x7112, 3);
-    if (op !== 0x4c) throw new Error("walk% at &7112 is not a JMP - PLOT not loaded?");
+    const [op, lo, hi] = s.readMemory(0x7012, 3);
+    if (op !== 0x4c) throw new Error("walk% at &7012 is not a JMP - PLOT not loaded?");
     walkAddr = lo | (hi << 8);
     let walks = 0;
     const stamps = [];

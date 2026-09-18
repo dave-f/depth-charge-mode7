@@ -32,6 +32,17 @@
   frames on Model B and Master; in 30s of play with kills, 5 frames ran
   0-8ms over budget on the B (a late start, not a dropped frame). PLOT now
   lives at &7100 (HIMEM=&7100) with ~250 bytes spare under the screen.
+- **2026-09-18: particles.** The original's two puffs ported: five sixels
+  from the charge when it sinks a sub, three from a mine that fizzles at the
+  surface; x+0..3, drift ±0.25 and rise 0..0.75 sixel/frame, life 4-7 frames
+  (its ±0.4px, 0..1px, 5-9 frames at 30fps, scaled). Own 8-entry table, not
+  object slots. Sixels share cells with sprites, so they are plotted at the
+  end of the walk and unplotted at the start of the next, and one plotted
+  onto an already-lit sixel is marked phantom and left alone: no holes in
+  the art, ever. Colour is the row's lane colour (white splash on the cyan
+  sky). The wreck now takes over the sub's drawn sprite instead of erasing
+  and redrawing it a frame later. PLOT moved to &7000 (HIMEM=&7000) for the
+  room; ~160 bytes spare. Frame rate unchanged (748/749 gaps at 2 fields).
 
 Ported from the PICO-8 original (128×128, 30fps). Reference implementation:
 `C:\Dev\depth-charge\depth.p8` (v1.1 — includes the mine-launch fix; left- and

@@ -11,11 +11,11 @@ REM parameters, no REMs inside PROC bodies (they cost ~0.5ms a visit),
 REM and no PRINT with STR$ (hud% writes numbers into screen memory).
 MODE 7
 *FX200,3
-HIMEM=&7100
+HIMEM=&7000
 *LOAD PLOT
 VDU 23;8202;0;0;0;
 REM frame% counts vsync events: point EVNTV at its handler, enable them
-?&220=?&7126:?&221=?&7127
+?&220=?&7026:?&221=?&7027
 *FX14,4
 REM Sound envelopes (see sndtest.bas): 1 sonar,2 charge drop,3 boom,4 death
 ENVELOPE 1,131,0,0,0,0,0,0,127,-6,-2,0,126,100
@@ -23,9 +23,9 @@ ENVELOPE 2,1,-5,0,0,18,0,0,127,-4,0,0,126,0
 ENVELOPE 3,1,0,0,0,0,0,0,127,-3,0,0,126,0
 ENVELOPE 4,2,-1,-1,-2,60,60,40,127,0,0,-2,126,126
 REM PLOT's entry points and the bytes it shares with BASIC (sixel.asm header)
-init%=&7100:walk%=&7112:frame%=&7115:hud%=&7118:sub%=&711B
-evt%=&7120:flg%=&7121:prv%=&7122:nchg%=&7125:rng%=&7128:secs%=&712E:tick%=&712F
-tab%=&7130:evq%=&7270
+init%=&7000:walk%=&7012:frame%=&7015:hud%=&7018:sub%=&701B
+evt%=&7020:flg%=&7021:prv%=&7022:nchg%=&7025:rng%=&7028:secs%=&702E:tick%=&702F
+tab%=&7030:evq%=&7170:plf%=&7184
 REM X%=1 stays set for the attract loop's OSBYTE 15,1 input buffer flush
 X%=1
 REM lane colours on blue water: white,cyan,yellow,green,magenta,red
@@ -149,7 +149,7 @@ LOCAL I%
 FOR I%=0 TO 19
 tab%?(I%*16)=0
 NEXT
-?evt%=0:?nchg%=0:?secs%=60
+?evt%=0:?nchg%=0:?secs%=60:!plf%=0:plf%!4=0
 PROCscreen
 PROCfloor
 tab%!0=&1E000000:tab%!4=&900:tab%!8=&FFFF0000:tab%!12=&4A003906:tab%?0=1

@@ -30,9 +30,10 @@ session high score. Compared to the original it fields 3 subs / 3 charges /
 and drops straight down rather than lobbing left/right.
 
 Sound is in: four `ENVELOPE`s (sonar ping on the title, charge drop, explosion,
-death), with a standalone audition menu on the disc (`CHAIN"SND"`). Still to come,
-maybe: the original's particle puffs and charge bubble animation. Design decisions
-and layout maths live in [notes/design.md](notes/design.md).
+death), with a standalone audition menu on the disc (`CHAIN"SND"`). The original's
+particle puffs are in too: a hit throws a few sixels up off the sub, a mine that
+misses splashes at the surface. Design decisions and layout maths live in
+[notes/design.md](notes/design.md).
 
 ## Controls
 
@@ -52,8 +53,10 @@ and layout maths live in [notes/design.md](notes/design.md).
   per game frame does the lot: locks to 25Hz by counting vsync events (EVNTV),
   scans the keys, steers, drops charges, rolls each sub's mine launch (16-bit
   LFSR), runs the clock, then walks and collides. Subs respawn themselves, a
-  sunk sub leaves a sinking wreck, and the TIME and DC fields are written
-  straight into screen memory by a small number printer.
+  sunk sub leaves a sinking wreck and a puff of particles (single sixels that
+  share cells with the sprites without ever clearing a sprite's bit), and the
+  TIME and DC fields are written straight into screen memory by a small
+  number printer.
 - **Director** (`src/game.bas`, BBC BASIC kept as plain text in git,
   tokenised onto the disc at build time by BeebAsm's `PUTBASIC`): scoring,
   sounds, the attract screen and the death sequence, driven by a flag byte

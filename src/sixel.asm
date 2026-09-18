@@ -34,6 +34,15 @@
 \       The walker calls the same code itself when a sub leaves or sinks.
 \ No clipping: sprites must lie fully on screen.
 \
+\ Particles: single sixels, up to NPART at once, in their own table after
+\ evq (see partplot/partage/puff). A charge hitting a sub puffs five from
+\ the charge; a mine fizzling at the surface splashes three. They drift,
+\ rise and die in 4-7 frames, taking each row's lane colour. Sharing cells
+\ with the sprites, they are plotted at the end of every walk and unplotted
+\ at the start of the next, with a "phantom" mark for a sixel a sprite had
+\ already lit, so they never punch holes in the art. BASIC zeroes plife
+\ (NPART bytes) in PROCwipe so a puff can't outlive its screen.
+\
 \ Frame bytes after the jump table (BASIC peeks/pokes these):
 \   objevt  events queued since BASIC last cleared it; the codes are in
 \           evq (after the object table, NSLOTS bytes): 1-3 a sub of that
@@ -73,9 +82,10 @@
 \ Both parties of a charge/sub hit (the mine only, for mine/ship) are
 \ erased and freed. Slots: 0 ship, 1-3 subs, 4-6 charges (7-8 spare),
 \ 9-12 mines (13-16 spare), 17-19 effects: when a charge sinks a sub,
-\ the collision pass copies the sub into a free effect slot, sinking
-\ (vy 38/256) to y+10 (max 61), adds 10 seconds to the clock, queues
-\ the sub's type for BASIC to score, and respawns the sub.
+\ the collision pass copies the sub into a free effect slot - drawn
+\ position included, so the sprite on screen simply becomes the wreck -
+\ sinking (vy 38/256) to y+10 (max 61), adds 10 seconds to the clock,
+\ queues the sub's type for BASIC to score, and respawns the sub.
 \
 \ Sprite format: EQUB width, height, ink-x, ink-y, ink-w, ink-h, then
 \ height rows of CEIL(width/8) bytes, MSB first (leftmost sixel = bit 7).
@@ -131,6 +141,10 @@ EV_HIT   = 6
 TPL_CHG  = 0        \ spawn templates: offsets into tpls
 TPL_MINE = 10
 TPL_SUB  = 20
+NPART    = 8        \ particle table size (a hit and a fizzle in one frame fit)
+PUFF_HIT = 5        \ particles from a charge/sub hit, as the original
+PUFF_FIZZ = 3       \ ...and from a mine fizzling at the surface
+PLIFE_MIN = 4       \ particle life 4..7 frames (original 5..9 at 30fps)
 
 .start
     JMP initrow
@@ -170,17 +184,32 @@ TPL_SUB  = 20
     SKIP NSLOTS * SLOTSIZE
 .evq
     SKIP NSLOTS         \ this frame's event codes
+.plife                  \ particles, as parallel arrays: frames left (0 = free;
+    SKIP NPART          \  bit 7 = phantom, see partplot), x and y in 8.8,
+.pxlo                   \  vx/vy signed /256. BASIC zeroes plife in PROCwipe.
+    SKIP NPART
+.pxhi
+    SKIP NPART
+.pylo
+    SKIP NPART
+.pyhi
+    SKIP NPART
+.pvx
+    SKIP NPART
+.pvy
+    SKIP NPART
 
-ASSERT objevt = &7120
-ASSERT frmflg = &7121
-ASSERT frmprv = &7122
-ASSERT nchg   = &7125
-ASSERT evaddr = &7126
-ASSERT rng    = &7128
-ASSERT secs   = &712E
-ASSERT tick   = &712F
-ASSERT objtab = &7130
-ASSERT evq    = &7270
+ASSERT objevt = &7020
+ASSERT frmflg = &7021
+ASSERT frmprv = &7022
+ASSERT nchg   = &7025
+ASSERT evaddr = &7026
+ASSERT rng    = &7028
+ASSERT secs   = &702E
+ASSERT tick   = &702F
+ASSERT objtab = &7030
+ASSERT evq    = &7170
+ASSERT plife  = &7184
 
 .initrow                \ colour code(s) at the left, blank graphics after
     LDY zpy
@@ -357,7 +386,8 @@ ASSERT evq    = &7270
 \ --- object walker --------------------------------------------------------
 
 .objwalk
-    LDA #LO(objtab)
+    JSR partage         \ particles: unplot, age, integrate (plotted again
+    LDA #LO(objtab)     \  after the collision pass, see partplot)
     STA zpslot
     LDA #HI(objtab)
     STA zpslot+1
@@ -466,7 +496,9 @@ ASSERT evq    = &7270
     BCC owchg
     CMP #EFF0
     BCS ownext          \ effect: just gone
-    LDA #EV_FIZZ        \ mine reached the surface
+    LDA #PUFF_FIZZ      \ mine reached the surface: a splash where it was
+    JSR puff            \  (zpx/zpy still hold the erase position)
+    LDA #EV_FIZZ
     JSR pushev
     JMP ownext
 .owchg
@@ -540,12 +572,28 @@ ASSERT evq    = &7270
     STA (zpslot),Y
     DEC nchg
     JSR showdc
-    LDA zpoth           \ the sub: erase, leave a wreck, tell BASIC its
-    STA zpgb            \ type to score, 10 seconds on the clock, respawn
+    LDY #3              \ a puff of particles from the middle of the charge
+    LDA (zpslot),Y
+    STA zpx
+    LDY #5
+    LDA (zpslot),Y
+    CLC
+    ADC #2
+    STA zpy
+    LDA #PUFF_HIT
+    JSR puff
+    LDA zpoth           \ the sub: becomes a wreck in place (erased only if
+    STA zpgb            \ no effect slot is free), tell BASIC its type to
+    LDA zpoth+1         \ score, 10 seconds on the clock, respawn
+    STA zpgb+1
+    JSR sinksub
+    BCS hitwreck
+    LDA zpoth
+    STA zpgb
     LDA zpoth+1
     STA zpgb+1
     JSR eraseslot
-    JSR sinksub
+.hitwreck
     LDY #1
     LDA (zpoth),Y
     JSR pushev
@@ -594,7 +642,7 @@ ASSERT evq    = &7270
     LDA objtab          \ ship slot 0 status
     CMP #1
     BEQ minesgo
-    RTS
+    JMP partplot
 .minesgo
     LDA #LO(objtab)     \ ship ink box -> A, once (erases can't touch it)
     STA zpgb
@@ -642,10 +690,147 @@ ASSERT evq    = &7270
     DEC zpcnt
     BEQ coldone
     JMP minloop
-.coldone
+.coldone                \ fall through into the particle plot pass
+
+\ --- particles ------------------------------------------------------------
+\ Single sixels sharing the cells with the sprites, so they must never clear
+\ a bit a sprite set. Two passes make that safe: partplot, at the very end of
+\ the walk, plots each particle and marks it phantom if its sixel was already
+\ lit; partage, at the very start of the next walk, unplots the non-phantom
+\ ones. Nothing else draws in between, so only our own bits get cleared.
+
+.partplot               \ pass B: bounds-check and plot every live particle
+    LDX #NPART-1
+.pbloop
+    LDA plife,X
+    BEQ pbnext
+    AND #&7F            \ phantom is judged afresh every frame
+    STA plife,X
+    LDA pxhi,X          \ off the playfield (control cells, HUD, floor,
+    CMP #6              \  legend): gone
+    BCC pbkill
+    CMP #80
+    BCS pbkill
+    LDA pyhi,X
+    CMP #6
+    BCC pbkill
+    CMP #69
+    BCS pbkill
+    STA zpy
+    LDA pxhi,X
+    STA zpx
+    STX zpcnt
+    JSR calc            \ A = mask, Y = col
+    STA zpm0
+    AND (zprow),Y
+    BEQ pbset
+    LDX zpcnt           \ already lit by a sprite: phantom, leave it alone
+    LDA plife,X
+    ORA #&80
+    STA plife,X
+    BMI pbnext
+.pbkill
+    LDA #0
+    STA plife,X
+    BEQ pbnext
+.pbset
+    LDA zpm0
+    ORA (zprow),Y
+    STA (zprow),Y
+    LDX zpcnt
+.pbnext
+    DEX
+    BPL pbloop
     RTS
 
-.pushev                 \ evq[objevt++] = event code in A; full = dropped
+.partage                \ pass A: unplot, age and integrate every live particle
+    LDX #NPART-1
+.paloop
+    LDA plife,X
+    BEQ panext
+    BMI paage           \ phantom: the lit bit was a sprite's, not ours
+    STX zpcnt
+    LDA pxhi,X
+    STA zpx
+    LDA pyhi,X
+    STA zpy
+    JSR unplot
+    LDX zpcnt
+.paage
+    LDA plife,X
+    AND #&7F
+    SEC
+    SBC #1
+    STA plife,X
+    BEQ panext          \ expired
+    LDA pvx,X           \ x += vx, sign-extended
+    LDY #0
+    BPL paxadd
+    DEY
+.paxadd
+    CLC
+    ADC pxlo,X
+    STA pxlo,X
+    TYA
+    ADC pxhi,X
+    STA pxhi,X
+    LDA pvy,X           \ y += vy
+    LDY #0
+    BPL payadd
+    DEY
+.payadd
+    CLC
+    ADC pylo,X
+    STA pylo,X
+    TYA
+    ADC pyhi,X
+    STA pyhi,X
+.panext
+    DEX
+    BPL paloop
+    RTS
+
+.puff                   \ A = how many particles from (zpx, zpy): each starts
+    TAX                 \ at x + 0..3, drifts +-0.25 sixel/frame, rises 0..0.75
+    LDY #0              \ a frame, lives 4..7 frames. Table full: the rest are
+.puffloop               \ dropped. (The original: x+0..3, +-0.4px, 0..1px up,
+    LDA plife,Y         \ 5..9 frames at 30fps.)
+    BEQ pufffree
+    INY
+    CPY #NPART
+    BNE puffloop
+    RTS
+.pufffree
+    JSR rnd
+    AND #3
+    CLC
+    ADC #PLIFE_MIN
+    STA plife,Y
+    JSR rnd
+    AND #3
+    CLC
+    ADC zpx
+    STA pxhi,Y
+    LDA zpy
+    STA pyhi,Y
+    LDA #&80            \ start mid-sixel
+    STA pxlo,Y
+    STA pylo,Y
+    JSR rnd             \ vx: -64..63 (arithmetic shift right)
+    CMP #&80
+    ROR A
+    STA pvx,Y
+    JSR rnd             \ vy: -(0..191)
+    AND #&BF
+    EOR #&FF
+    CLC
+    ADC #1
+    STA pvy,Y
+    DEX
+    BNE puffloop
+    RTS
+
+.pushev                \ evq[objevt++] = event code in A; full = dropped
     LDX objevt
     CPX #NSLOTS
     BCS pushfull
@@ -655,7 +840,8 @@ ASSERT evq    = &7270
     RTS
 
 .sinksub                \ sub (zpoth) was sunk: copy it into a free effect
-                        \ slot as a sinking wreck (no free slot: no wreck)
+                        \ slot as a sinking wreck. C set = done, the wreck
+                        \ owns the sub's drawn sprite; C clear = no free slot
     LDX #EFF0
     LDY #NEFFS
     JSR findfree
@@ -673,9 +859,10 @@ ASSERT evq    = &7270
     LDA #0
     STA (zpgb),Y
     INY
-    LDA #&FF            \ +10/+11 last drawn: never (the sub was just erased)
-    STA (zpgb),Y
+    LDA (zpoth),Y       \ +10/+11 last drawn: the sub's - the sprite stays
+    STA (zpgb),Y        \  on screen and the wreck just carries on from it
     INY
+    LDA (zpoth),Y
     STA (zpgb),Y
     INY
     LDA #6              \ +12/+13 xmin/xmax as a sub's
@@ -699,6 +886,7 @@ ASSERT evq    = &7270
     LDY #0
     LDA #1
     STA (zpgb),Y
+    SEC
 .sinkdone
     RTS
 

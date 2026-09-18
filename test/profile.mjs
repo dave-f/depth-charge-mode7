@@ -1,7 +1,7 @@
 // profile.mjs - a BBC BASIC line profiler on the emulator. Boots the game (run
 // from the repo root), plays N fields, and attributes every CPU cycle to the
 // BASIC line the interpreter was executing (its statement pointer at &0B/&0C),
-// or to "MC" when the CPU is in the PLOT code (&7100-&7BFF, including the
+// or to "MC" when the CPU is in the PLOT code (&7000-&7BFF, including the
 // frame entry's vsync wait). Time inside MOS calls made by a statement
 // (PRINT, SOUND, CALL &FFF4) lands on that statement's line, which is the
 // point. Lines are matched to src/game.bas by order (PUTBASIC keeps it).
@@ -52,18 +52,18 @@ const mosCost = new Float64Array(lines.length);   // of which: CPU in the MOS (&
 const visits = new Uint32Array(lines.length);
 let mc = 0, other = 0, last = s.elapsedCycles, lastLine = -2;
 let curEvt = 0, framesCounted = 0, frameOn = onlyEvt === 0;
-const [, wlo, whi] = s.readMemory(0x7112, 3);
+const [, wlo, whi] = s.readMemory(0x7012, 3);
 const walk = wlo | (whi << 8);
 const cpu = s._machine.processor;
 const evHook = cpu.debugWrite.add((addr, val) => {
-    if (addr === 0x7120 && val > 0) { curEvt = val; if (onlyEvt && val >= onlyEvt && !frameOn) { frameOn = true; framesCounted++; } }
+    if (addr === 0x7020 && val > 0) { curEvt = val; if (onlyEvt && val >= onlyEvt && !frameOn) { frameOn = true; framesCounted++; } }
     return false;
 });
 const hook = cpu.debugInstruction.add((pc) => {
     const now = s.elapsedCycles, d = now - last; last = now;
     if (pc === walk) { curEvt = 0; if (onlyEvt) frameOn = false; else framesCounted++; }
     if (!frameOn) return false;
-    if (pc >= 0x7100 && pc < 0x7c00) { mc += d; return false; }
+    if (pc >= 0x7000 && pc < 0x7c00) { mc += d; return false; }
     const li = lineAt(rb(0x0b) | (rb(0x0c) << 8));
     if (li < 0) { other += d; return false; }
     cost[li] += d;
