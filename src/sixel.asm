@@ -63,6 +63,9 @@
 \           the vsync event with *FX14,4 (and *FX13,4 on the way out)
 \   rng     16-bit LFSR state for spawns; BASIC seeds it (!rng = TIME OR 1,
 \           a 4-byte poke that spills harmlessly into the pad after it)
+\   spin    frames until the wet charges turn to their next pose: they
+\           tumble end over end through four sprites (4, 6, 7, 8) every
+\           SPINRATE frames, each starting at a random pose when it lands
 \   secs    seconds left; BASIC sets 60 at the start, a kill adds 10 (max 255)
 \   tick    frames until the next second (25)
 \
@@ -148,6 +151,9 @@ NPART    = 8        \ particle table size (a hit and a fizzle in one frame fit)
 PUFF_HIT = 5        \ particles from a charge/sub hit, as the original
 PUFF_FIZZ = 3       \ ...and from a mine fizzling at the surface
 PLIFE_MIN = 4       \ particle life 4..7 frames (original 5..9 at 30fps)
+SPINRATE = 8        \ frames per charge pose (original: 15 at 30fps = 0.5s)
+CHG_POSE0 = 4       \ charge sprites: 4 (the vertical bar, also the airborne
+CHG_POSE1 = 6       \  block) then 6, 7, 8 - a bar turning end over end
 
 .start
     JMP initrow
@@ -178,7 +184,10 @@ PLIFE_MIN = 4       \ particle life 4..7 frames (original 5..9 at 30fps)
     EQUW evhandler
 .rng
     EQUW &ACE1      \ any non-zero seed; BASIC reseeds from TIME
-    SKIP 4          \ pad (BASIC's 4-byte poke of rng spills here)
+    SKIP 2          \ pad (BASIC's 4-byte poke of rng spills here)
+.spin
+    EQUB SPINRATE   \ frames until wet charges turn to their next pose
+    SKIP 1
 .secs
     EQUB 0
 .tick
@@ -202,17 +211,18 @@ PLIFE_MIN = 4       \ particle life 4..7 frames (original 5..9 at 30fps)
 .pvy
     SKIP NPART
 
-ASSERT objevt = &7020
-ASSERT frmflg = &7021
-ASSERT frmprv = &7022
-ASSERT nchg   = &7025
-ASSERT evaddr = &7026
-ASSERT rng    = &7028
-ASSERT secs   = &702E
-ASSERT tick   = &702F
-ASSERT objtab = &7030
-ASSERT evq    = &7170
-ASSERT plife  = &7184
+ASSERT objevt = &6E20
+ASSERT frmflg = &6E21
+ASSERT frmprv = &6E22
+ASSERT nchg   = &6E25
+ASSERT evaddr = &6E26
+ASSERT rng    = &6E28
+ASSERT spin   = &6E2C
+ASSERT secs   = &6E2E
+ASSERT tick   = &6E2F
+ASSERT objtab = &6E30
+ASSERT evq    = &6F70
+ASSERT plife  = &6F84
 
 .initrow                \ colour code(s) at the left, blank graphics after
     LDY zpy
@@ -577,6 +587,8 @@ ASSERT plife  = &7184
     JSR showdc
     LDY #3              \ a puff of particles from the middle of the charge
     LDA (zpslot),Y
+    CLC
+    ADC #1
     STA zpx
     LDY #5
     LDA (zpslot),Y
@@ -950,7 +962,7 @@ ASSERT plife  = &7184
     RTS
 
 .tpls
-    EQUB 0,0, 96,0, &FF,&FF, 6,76,8,64      \ charge: airborne, falls at
+    EQUB 0,0, 96,0, &FF,&FF, 6,74,8,64      \ charge: airborne, falls at
                                             \  96/256 (vx set by dropchg;
                                             \  frsplash switches to 0/38)
     EQUB 0,0, &DA,&FF, &FF,&FF, 6,77,13,74  \ mine: rises at -38/256; ymin 13
@@ -1169,33 +1181,79 @@ ASSERT plife  = &7184
     INX
     CPX #SUB0+NSUBS
     BNE frmine
-    LDX #CHG0           \ airborne charges (vx set) that have reached the
-.frsplash               \ water row: stop drifting, sink slowly
+    DEC spin            \ charges: land the airborne ones, turn the wet ones
+    LDX #CHG0
+.frsplash
     JSR slotptr
     LDY #0
     LDA (zpgb),Y
     CMP #1
     BNE frsplnext
     LDY #6
-    LDA (zpgb),Y        \ vx lo 0: already sinking
-    BEQ frsplnext
+    LDA (zpgb),Y        \ vx lo 0: wet - spinning
+    BEQ frspin
     LDY #5
     LDA (zpgb),Y        \ y < 14: ink still above the waterline
     CMP #14
     BCC frsplnext
-    LDA #0
-    LDY #6
+    LDA #0              \ splash: stop drifting, sink slowly at 38/256
+    LDY #6              \  (the original's 19 felt slow here)
     STA (zpgb),Y
     INY
     STA (zpgb),Y
     LDY #8
-    LDA #38             \ vy = 38/256 (the original's 19 felt slow here)
+    LDA #38
     STA (zpgb),Y
+    JSR rnd             \ and start the spin at a random pose
+    AND #3
+    TAY
+    LDA poses,Y
+    LDY #1
+    STA (zpgb),Y
+    BNE frsplnext
+.frspin
+    LDA spin            \ only on a pose-change frame
+    BNE frsplnext
+    LDY #1
+    LDA (zpgb),Y        \ next pose: 4 -> 6 -> 7 -> 8 -> 4
+    CMP #CHG_POSE0
+    BNE frspinnext
+    LDA #CHG_POSE1-1
+.frspinnext
+    CLC
+    ADC #1
+    CMP #CHG_POSE1+3
+    BNE frspinset
+    LDA #CHG_POSE0
+.frspinset
+    STA (zpgb),Y
+    STA zparg
+    LDY #10
+    LDA (zpgb),Y
+    CMP #&FF
+    BEQ frsplnext       \ not drawn yet: the walker will draw the new pose
+    STA zpx
+    INY
+    LDA (zpgb),Y
+    STA zpy
+    TXA
+    PHA
+    LDA #1              \ redraw in place: the opaque move wipes the old pose
+    JSR sprgo
+    PLA
+    TAX
 .frsplnext
     INX
     CPX #CHG0+NCHGUSE
     BNE frsplash
+    LDA spin
+    BNE frspindone
+    LDA #SPINRATE
+    STA spin
+.frspindone
     JMP objwalk
+.poses
+    EQUB CHG_POSE0, CHG_POSE1, CHG_POSE1+1, CHG_POSE1+2
 
 .dropchg                \ zpwm = 0: lob a charge off the port side, 1: off
                         \ the starboard side; C set if dropped. Starts at
@@ -1226,9 +1284,9 @@ ASSERT plife  = &7184
     STA (zpgb),Y
     LDA zpwm            \ (read before showdc's hudnum reuses it)
     BNE dropright
-    LDA objtab+3        \ port: x = ship x - 4 (ink 2 clear of the bow),
+    LDA objtab+3        \ port: x = ship x - 5 (ink 2 clear of the bow),
     SEC                 \  vx = -128/256
-    SBC #4
+    SBC #5
     LDY #3
     STA (zpgb),Y
     LDY #7
@@ -1236,9 +1294,9 @@ ASSERT plife  = &7184
     STA (zpgb),Y
     BNE dropgo
 .dropright
-    LDA objtab+3        \ starboard: x = ship x + 22, vx = +128/256
+    LDA objtab+3        \ starboard: x = ship x + 21, vx = +128/256
     CLC
-    ADC #22
+    ADC #21
     LDY #3
     STA (zpgb),Y
     LDY #7
@@ -1513,8 +1571,12 @@ NEXT
     EQUW sprsub0        \ 1: sub type 0 (20 pts), pad cols each side
     EQUW sprsub1        \ 2: sub type 1 (50 pts)
     EQUW sprsub2        \ 3: sub type 2 (80 pts)
-    EQUW sprcharge      \ 4: depth charge, pad all round (it flies diagonally)
+    EQUW sprcharge      \ 4: depth charge, pad all round (it flies diagonally);
+                        \    also the first pose of the wet charge's spin
     EQUW sprmine        \ 5: mine, pad rows above/below
+    EQUW sprchg1        \ 6-8: the other three poses of the spinning charge,
+    EQUW sprchg2        \    same box and ink box as 4 so the hit test and
+    EQUW sprchg3        \    the in-place redraw don't care which is showing
 
 .sprship
     EQUB 22, 6
@@ -1564,15 +1626,49 @@ NEXT
     EQUB %01111111, %11111111, %00000000   \ .###############.
     EQUB %00111111, %11111110, %00000000   \ ..#############..
 
-.sprcharge
-    EQUB 4, 6
-    EQUB 1, 1, 2, 4     \ ink box
-    EQUB %00000000                         \ ....
-    EQUB %01100000                         \ .##.
-    EQUB %01100000                         \ .##.
-    EQUB %01100000                         \ .##.
-    EQUB %01100000                         \ .##.
-    EQUB %00000000                         \ ....
+.sprcharge              \ pose 0: vertical bar (and the airborne block)
+    EQUB 6, 6
+    EQUB 2, 1, 2, 4     \ ink box: the bar, whatever pose is showing
+    EQUB %00000000                         \ ......
+    EQUB %00110000                         \ ..##..
+    EQUB %00110000                         \ ..##..
+    EQUB %00110000                         \ ..##..
+    EQUB %00110000                         \ ..##..
+    EQUB %00000000                         \ ......
+
+\ Sixels are wider than they are tall (about 1.4:1), so the horizontal bar
+\ and the diagonals are drawn a sixel thicker than the vertical bar to look
+\ the same weight.
+
+.sprchg1                \ pose 1: leaning /
+    EQUB 6, 6
+    EQUB 2, 1, 2, 4
+    EQUB %00000000                         \ ......
+    EQUB %00011000                         \ ...##.
+    EQUB %00111000                         \ ..###.
+    EQUB %01110000                         \ .###..
+    EQUB %01100000                         \ .##...
+    EQUB %00000000                         \ ......
+
+.sprchg2                \ pose 2: horizontal bar
+    EQUB 6, 6
+    EQUB 2, 1, 2, 4
+    EQUB %00000000                         \ ......
+    EQUB %00000000                         \ ......
+    EQUB %01111000                         \ .####.
+    EQUB %01111000                         \ .####.
+    EQUB %01111000                         \ .####.
+    EQUB %00000000                         \ ......
+
+.sprchg3                \ pose 3: leaning \
+    EQUB 6, 6
+    EQUB 2, 1, 2, 4
+    EQUB %00000000                         \ ......
+    EQUB %01100000                         \ .##...
+    EQUB %01110000                         \ .###..
+    EQUB %00111000                         \ ..###.
+    EQUB %00011000                         \ ...##.
+    EQUB %00000000                         \ ......
 
 .sprmine
     EQUB 3, 5

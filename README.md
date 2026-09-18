@@ -29,7 +29,7 @@ session high score. Compared to the original it fields 3 subs / 3 charges /
 4 mines (the Beeb's 75 sixels of water want a less crowded ocean than 128px did)
 but keeps the original's two fire keys: a charge is lobbed off the left or
 right side of the ship, falls diagonally through the air and sinks straight
-down once it hits the water.
+down once it hits the water, tumbling end over end as it goes.
 
 Sound is in: four `ENVELOPE`s (sonar ping on the title, charge drop, explosion,
 death), with a standalone audition menu on the disc (`CHAIN"SND"`). The original's

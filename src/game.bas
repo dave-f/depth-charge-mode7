@@ -12,11 +12,11 @@ REM and no PRINT with STR$ (hud% writes numbers into screen memory).
 MODE 7
 *FX200,3
 *FX4,1
-HIMEM=&7000
+HIMEM=&6E00
 *LOAD PLOT
 VDU 23;8202;0;0;0;
 REM frame% counts vsync events: point EVNTV at its handler, enable them
-?&220=?&7026:?&221=?&7027
+?&220=?&6E26:?&221=?&6E27
 *FX14,4
 REM Sound envelopes (see sndtest.bas): 1 sonar,2 charge drop,3 boom,4 death
 ENVELOPE 1,131,0,0,0,0,0,0,127,-6,-2,0,126,100
@@ -24,9 +24,9 @@ ENVELOPE 2,1,-5,0,0,18,0,0,127,-4,0,0,126,0
 ENVELOPE 3,1,0,0,0,0,0,0,127,-3,0,0,126,0
 ENVELOPE 4,2,-1,-1,-2,60,60,40,127,0,0,-2,126,126
 REM PLOT's entry points and the bytes it shares with BASIC (sixel.asm header)
-init%=&7000:walk%=&7012:frame%=&7015:hud%=&7018:sub%=&701B
-evt%=&7020:flg%=&7021:prv%=&7022:nchg%=&7025:rng%=&7028:secs%=&702E:tick%=&702F
-tab%=&7030:evq%=&7170:plf%=&7184
+init%=&6E00:walk%=&6E12:frame%=&6E15:hud%=&6E18:sub%=&6E1B
+evt%=&6E20:flg%=&6E21:prv%=&6E22:nchg%=&6E25:rng%=&6E28:secs%=&6E2E:tick%=&6E2F
+tab%=&6E30:evq%=&6F70:plf%=&6F84
 REM X%=1 stays set for the attract loop's OSBYTE 15,1 input buffer flush
 X%=1
 REM lane colours on blue water: white,cyan,yellow,green,magenta,red

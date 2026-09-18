@@ -19,8 +19,8 @@ s.keyDown(32); await s.runFrames(3); s.keyUp(32); await s.runFrames(60);
 
 const F = 39936;
 const MS = 2000;                       // cycles per ms
-const FRAME_ENTRY = 0x7015;            // JMP frame in the jump table
-const [op, lo, hi] = s.readMemory(0x7012, 3);
+const FRAME_ENTRY = 0x6E15;            // JMP frame in the jump table
+const [op, lo, hi] = s.readMemory(0x6E12, 3);
 const walk = lo | (hi << 8);
 const cpu = s._machine.processor;
 let flg = 0, cur = null, drops = 0;
@@ -36,8 +36,8 @@ const h1 = cpu.debugInstruction.add((pc) => {
     return false;
 });
 const h2 = cpu.debugWrite.add((addr, val) => {
-    if (addr === 0x7021) flg = val;                 // frmflg written by frame
-    if (addr === 0x7020 && val > 0 && cur) cur.evt = val;   // objevt bumped by walker
+    if (addr === 0x6E21) flg = val;                 // frmflg written by frame
+    if (addr === 0x6E20 && val > 0 && cur) cur.evt = val;   // objevt bumped by walker
     return false;
 });
 if (dropEvery > 0) {

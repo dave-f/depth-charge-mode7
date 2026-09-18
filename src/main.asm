@@ -3,7 +3,7 @@
 \ plot/sprite machine code (sixel.asm) is assembled to PLOT and *LOADed
 \ by the BASIC, which sets HIMEM below it.
 
-ORG &7000
+ORG &6E00
 GUARD &7C00             \ don't run into screen memory
 
 INCLUDE "src/sixel.asm"

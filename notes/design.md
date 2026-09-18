@@ -54,6 +54,14 @@
   screen edge an outward lob leaves the bounds box at once and is lost,
   as the original's went off screen. `*FX4,1` keeps the cursor keys out of
   the editor. ~44 bytes spare under the screen after this.
+- **2026-09-18: spinning charges.** The original's wet charge cycles four
+  poses (vertical bar, /, horizontal bar, \) every 15 frames at 30fps. Here:
+  four 6x6 sprites (ids 4, 6, 7, 8) with pads all round and one shared 2x4
+  ink box so the hit test is the same whatever is showing; the charge pass in
+  the frame entry (`frsplash`) steps every wet charge to its next pose every
+  SPINRATE (8) frames and redraws it in place with the opaque move, which
+  wipes the old pose. A charge takes a random pose as it lands; airborne it
+  is always the plain bar. PLOT moved to &6E00 (HIMEM=&6E00) for the room.
 
 Ported from the PICO-8 original (128×128, 30fps). Reference implementation:
 `C:\Dev\depth-charge\depth.p8` (v1.1 — includes the mine-launch fix; left- and
